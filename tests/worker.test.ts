@@ -58,3 +58,25 @@ test('invalid date schedule writes leave the saved schedule unchanged',async()=>
  assert.equal(f.db.prepare('SELECT windows FROM exceptions WHERE date=?').get(date)?.windows,JSON.stringify(windows));
  f.db.close();
 });
+
+test('remaining-duration migration updates saved settings while preserving bookings and other fields',async()=>{
+ const f=fixture();
+ const touchup={...SERVICES.find(s=>s.id==='touchup')!,description:'自訂補色說明',duration:null};
+ const removal={...SERVICES.find(s=>s.id==='color-removal')!,duration:null,specs:[{label:'現場評估',price:2500}]};
+ f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify(touchup),'touchup');
+ f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify(removal),'color-removal');
+ const settings=JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string);
+ settings.addonDurations.lower=null;settings.address='測試地址';
+ f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify(settings));
+ assert.equal((await request(f,'/bookings','customer','POST',payload())).status,201);
+ const booking=f.db.prepare('SELECT * FROM bookings').get();
+ f.db.exec(readFileSync(new URL('../migrations/0003_remaining_service_durations.sql',import.meta.url),'utf8'));
+ const publicData=await (await request(f,'/public')).json() as {settings:typeof DEFAULT_SETTINGS;services:typeof SERVICES};
+ assert.equal(publicData.services.find(s=>s.id==='touchup')?.duration,180);
+ assert.equal(publicData.services.find(s=>s.id==='color-removal')?.duration,60);
+ assert.equal(publicData.services.find(s=>s.id==='touchup')?.description,touchup.description);
+ assert.equal(publicData.services.find(s=>s.id==='color-removal')?.specs[0].price,2500);
+ assert.deepEqual(publicData.settings,{...settings,addonDurations:{...settings.addonDurations,lower:30}});
+ assert.deepEqual(f.db.prepare('SELECT * FROM bookings').get(),booking);
+ f.db.close();
+});

@@ -64,6 +64,6 @@ GitHub repository Variables：
 
 ## 5. 啟用 CI/CD
 
-填妥 GitHub Secrets／Variables 後，將 `DEPLOY_ENABLED` 改成 `true`。push main 或在 Actions 執行 Deploy to Cloudflare。部署前重新測試，D1 migration 套用成功才上傳 Worker。Cloudflare runtime secrets 不由 GitHub Actions 重寫。
+填妥 GitHub Secrets／Variables 後，將 `DEPLOY_ENABLED` 改成 `true`。push main 或在 Actions 執行 Deploy to Cloudflare。部署前重新測試，D1 migration 套用成功才上傳 Worker。Cloudflare runtime secrets 不由 GitHub Actions 重寫；設定 keep_vars=true，保留在 Cloudflare 後台建立的一般變數。
 
 正式首次啟用時，必須以店家與客人 LINE 帳號驗證登入、好友狀態、審核成功通知、取消通知及提醒。未完成真實 LINE 驗收前，網站設計示範不能當作正式接單成功。

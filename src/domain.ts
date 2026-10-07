@@ -8,11 +8,11 @@ export const SERVICES:Service[] = [
  {id:'remove-own',name:'本店卸除不續接',category:'removal',description:'本店睫毛卸除。',specs:[{label:'單次',price:200}],duration:30,active:true},
  {id:'remove-other',name:'他店純卸除',category:'removal',description:'他店睫毛卸除。',specs:[{label:'單次',price:300}],duration:30,active:true},
  {id:'brows',name:'手工漸層霧眉',category:'brows',description:'不限男女。兩人同行每人折 $500；三個月內補色免費。',specs:[{label:'單人',price:5000},{label:'兩人同行・每人',price:4500}],duration:180,active:true},
- {id:'touchup',name:'霧眉補色',category:'brows',description:'三個月內免費，需由店家確認前次服務紀錄。',specs:[{label:'三個月內・店家確認',price:0}],duration:null,active:true},
- {id:'color-removal',name:'無創除色',category:'brows',description:'NT$2,000–3,000，實際金額依店家評估。',specs:[{label:'現場評估',price:2000}],duration:null,active:true}
+ {id:'touchup',name:'霧眉補色',category:'brows',description:'三個月內免費，需由店家確認前次服務紀錄。',specs:[{label:'三個月內・店家確認',price:0}],duration:180,active:true},
+ {id:'color-removal',name:'無創除色',category:'brows',description:'NT$2,000–3,000，實際金額依店家評估。',specs:[{label:'現場評估',price:2000}],duration:60,active:true}
 ];
 export type Settings = {address:string;instagram:string;lineUrl:string;bookingDays:number;leadHours:number;cancelHours:number;approvalHours:number;bufferMinutes:number;stepMinutes:number;reminders:boolean;addonDurations:{lower:number|null;own:number|null;other:number|null};weekly:Record<string,[string,string][]>;policies:string};
-export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:30,stepMinutes:30,reminders:false,addonDurations:{lower:null,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。到店以現金付款。取消、改期與遲到規則請於預約前向店家確認。'};
+export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:30,stepMinutes:30,reminders:false,addonDurations:{lower:30,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。到店以現金付款。取消、改期與遲到規則請於預約前向店家確認。'};
 export type Addons={lower:boolean;removal:'none'|'own'|'other'};
 export type TimeWindow=[string,string];
 export type DateSchedule={date:string;windows:string};

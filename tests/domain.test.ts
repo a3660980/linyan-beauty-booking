@@ -21,7 +21,7 @@ test('booking horizon, lead time, closed days and exact boundary',()=>{
 });
 test('unknown durations prevent slots and addons increase the occupied duration',()=>{
  const base={...SERVICES[0],duration:null};assert.equal(serviceDuration(base,{lower:false,removal:'none'},DEFAULT_SETTINGS),null);
- assert.equal(serviceDuration({...base,duration:90},{lower:true,removal:'own'},DEFAULT_SETTINGS),null);
+ assert.equal(serviceDuration({...base,duration:90},{lower:true,removal:'own'},{...DEFAULT_SETTINGS,addonDurations:{...DEFAULT_SETTINGS.addonDurations,lower:null}}),null);
  assert.equal(serviceDuration({...base,duration:90},{lower:true,removal:'own'},{...DEFAULT_SETTINGS,addonDurations:{lower:15,own:20,other:20}}),125);
 });
 test('price menu and invalid cross-category addons',()=>{
@@ -43,6 +43,8 @@ test('owner supplied service ranges reserve their upper bound plus 30 minutes cl
  const slots=availableSlots('2026-10-08',duration,cfg,[['10:00','18:00']],[{start:taipeiMs('2026-10-08','10:00'),end:taipeiMs('2026-10-08','12:30')}],now);
  assert.equal(slots[0],'12:30');
  assert.equal(serviceDuration(service,{lower:false,removal:'own'},cfg),150);
+ const lowerDuration=serviceDuration(service,{lower:true,removal:'none'},cfg)!;
+ assert.deepEqual(availableSlots('2026-10-08',lowerDuration,cfg,[['10:00','13:00']],[],now),['10:00']);
  const brows=SERVICES.find(s=>s.id==='brows')!;
  assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:00']],[],now),[]);
  assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:30']],[],now),['10:00']);
