@@ -24,4 +24,8 @@ jobs:
       - run: npm run check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
-      - run: npx wrangler deploy --dry-run --outdir .deploy/worker-check
+      - run: npm run config:deploy
+        env:
+          CLOUDFLARE_D1_DATABASE_ID: 00000000-0000-0000-0000-000000000000
+      - run: npx wrangler d1 migrations apply DB --local --config .deploy/wrangler.json
+      - run: npx wrangler deploy --dry-run --config .deploy/wrangler.json --outdir .deploy/worker-check

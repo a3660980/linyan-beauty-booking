@@ -1,5 +1,5 @@
 import {test,expect} from '@playwright/test';
-import {taipeiDay,weekday} from '../src/domain';
+import {taipeiDay,weekday,SERVICES,DEFAULT_SETTINGS} from '../src/domain';
 const futureDay=()=>{const date=taipeiDay(Date.now()+4*86400000);return weekday(date)===3?taipeiDay(Date.now()+5*86400000):date};
 test.beforeEach(async({page})=>{await page.route('**/api/**',r=>r.fulfill({status:503,contentType:'application/json',body:'{"error":"測試環境未連線"}'}))});
 test('demo booking keeps selected time through submission and owner approval',async({page})=>{
@@ -30,7 +30,9 @@ test('mobile pages have no horizontal overflow and the menu works',async({page})
  await expect(page.locator('nav.open')).toBeVisible();
 });
 test('unknown production service time blocks advancing to booking slots',async({page})=>{
- await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();
+ await page.route('**/api/me',r=>r.fulfill({status:200,contentType:'application/json',body:'{"user":null}'}));
+ await page.route('**/api/public',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({services:SERVICES.map(s=>({...s,duration:null})),settings:DEFAULT_SETTINGS,lineReady:false,lineUrl:''})}));
+ await page.goto('/#booking');await expect(page.locator('.setup-banner')).toContainText('線上預約設定中');await page.getByRole('button',{name:'選擇日期',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('尚未設定此服務時間');
  await expect(page.getByRole('heading',{name:'想為自己預約什麼？'})).toBeVisible();
 });
@@ -57,7 +59,7 @@ test('mobile calendar split schedules update customer slots and can be closed or
  await expect(cell).toContainText('10:00–12:00');await expect(cell).toContainText('15:00–18:00');
  const customerSlots=async()=>{await page.evaluate(()=>location.hash='demo-booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByLabel('預約日期',{exact:true}).fill(date)};
  const edit=async()=>{await page.evaluate(()=>location.hash='demo-admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();await page.getByLabel('行事曆日期').fill(date);await page.getByRole('button',{name:`設定 ${date} 的可預約時間`}).click()};
- await customerSlots();await expect(page.locator('.time-grid button')).toHaveText(['10:00','15:00','15:30','16:00']);
+ await customerSlots();await expect(page.locator('.time-grid button')).toHaveText(['15:00','15:30']);
  await edit();await dialog.getByRole('checkbox',{name:'全天休息'}).check();await dialog.getByRole('button',{name:'儲存當日排班'}).click();
  await expect(cell).toContainText('全天休息');await customerSlots();await expect(page.getByRole('heading',{name:'這天目前沒有可預約時段'})).toBeVisible();
  await edit();await dialog.getByRole('button',{name:'恢復固定排班'}).click();await expect(cell).toContainText('未開放');

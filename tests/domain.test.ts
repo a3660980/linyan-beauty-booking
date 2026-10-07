@@ -20,7 +20,7 @@ test('booking horizon, lead time, closed days and exact boundary',()=>{
  assert.equal(taipeiDay(Date.parse('2026-10-07T17:00:00Z')),'2026-10-08');
 });
 test('unknown durations prevent slots and addons increase the occupied duration',()=>{
- const base=SERVICES[0];assert.equal(serviceDuration(base,{lower:false,removal:'none'},DEFAULT_SETTINGS),null);
+ const base={...SERVICES[0],duration:null};assert.equal(serviceDuration(base,{lower:false,removal:'none'},DEFAULT_SETTINGS),null);
  assert.equal(serviceDuration({...base,duration:90},{lower:true,removal:'own'},DEFAULT_SETTINGS),null);
  assert.equal(serviceDuration({...base,duration:90},{lower:true,removal:'own'},{...DEFAULT_SETTINGS,addonDurations:{lower:15,own:20,other:20}}),125);
 });
@@ -35,4 +35,15 @@ test('three-month touchup uses calendar months, including month-end dates',()=>{
  const before=taipeiMs('2026-01-31','12:00');
  assert.equal(withinCalendarMonths(before,taipeiMs('2026-04-30','12:00'),3),true);
  assert.equal(withinCalendarMonths(before,taipeiMs('2026-04-30','12:01'),3),false);
+});
+test('owner supplied service ranges reserve their upper bound plus 30 minutes cleanup',()=>{
+ const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const service=SERVICES.find(s=>s.id==='single')!;
+ const duration=serviceDuration(service,{lower:false,removal:'none'},cfg)!;
+ const slots=availableSlots('2026-10-08',duration,cfg,[['10:00','18:00']],[{start:taipeiMs('2026-10-08','10:00'),end:taipeiMs('2026-10-08','12:30')}],now);
+ assert.equal(slots[0],'12:30');
+ assert.equal(serviceDuration(service,{lower:false,removal:'own'},cfg),150);
+ const brows=SERVICES.find(s=>s.id==='brows')!;
+ assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:00']],[],now),[]);
+ assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:30']],[],now),['10:00']);
 });

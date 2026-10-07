@@ -13,9 +13,9 @@ type AdminData={bookings:Booking[];notifications:Notice[];settings:Settings;serv
 const shiftDay=(n:number)=>taipeiDay(Date.now()+n*86400000);
 const timeOf=(n:number)=>new Date(n+8*3600000).toISOString().slice(11,16);
 const dayLabel=(d:string)=>new Date(d+'T12:00:00+08:00').toLocaleDateString('zh-TW',{month:'long',day:'numeric',weekday:'short',timeZone:'Asia/Taipei'});
-const demoServices=SERVICES.map(x=>({...x,duration:x.category==='brows'?150:90}));
-const demoSettings:Settings={...structuredClone(DEFAULT_SETTINGS),weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[String(i),i===3?[]:[['10:00','18:00']]])),addonDurations:{lower:15,own:15,other:20}};
-function demoBooking(id:string,day:number,time:string,status:string,customer='示範客人'):Booking{const date=shiftDay(day),start=Date.parse(`${date}T${time}:00+08:00`);return {id,customer,phone:'09••••••••',note:'此為操作示範資料',service_id:'single',service_name:'日式單根',spec:'150 根',date,start,end:start+105*60000,price:1000,status,version:1,paid:0,paid_amount:null};}
+const demoServices=SERVICES.map(x=>({...x,duration:x.duration??(x.category==='brows'?180:60)}));
+const demoSettings:Settings={...structuredClone(DEFAULT_SETTINGS),weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[String(i),i===3?[]:[['10:00','18:00']]])),addonDurations:{lower:15,own:30,other:30}};
+function demoBooking(id:string,day:number,time:string,status:string,customer='示範客人'):Booking{const date=shiftDay(day),start=Date.parse(`${date}T${time}:00+08:00`);return {id,customer,phone:'09••••••••',note:'此為操作示範資料',service_id:'single',service_name:'日式單根',spec:'150 根',date,start,end:start+(120+demoSettings.bufferMinutes)*60000,price:1000,status,version:1,paid:0,paid_amount:null};}
 const initialDemo=[demoBooking('demo-001',1,'10:00','pending'),demoBooking('demo-002',1,'14:00','confirmed'),demoBooking('demo-003',2,'11:00','pending')];
 function Brand({small=false}:{small?:boolean}){return <a className={'brand '+(small?'brand-small':'')} href="#home"><span>Linyanbeauty</span><small>琳 顏 美 學</small></a>}
 function App(){
