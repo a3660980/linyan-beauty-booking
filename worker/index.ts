@@ -56,7 +56,7 @@ async function pushNotifications(env:Env){
  }
 }
 async function api(req:Request,env:Env,ctx:ExecutionContext){
- const url=new URL(req.url),path=url.pathname,method=req.method,origin=env.APP_ORIGIN||url.origin;
+ const url=new URL(req.url),path=url.pathname,method=req.method,origin=new URL(env.APP_ORIGIN||url.origin).origin;
  if(path==='/api/health')return json({ok:true});
  if(!env.DB)fail('資料庫尚未連接',503);
  if(path==='/api/line/webhook'&&method==='POST'){

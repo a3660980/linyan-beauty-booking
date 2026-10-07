@@ -54,6 +54,8 @@ GitHub repository Variables：
 | AUTH_SECRET | 私人產生的至少 32 字元隨機簽章金鑰 |
 | ADMIN_LINE_USER_IDS | 管理員 LINE user ID，以逗號分隔；不得放在 Git |
 
+若 LINE 顯示 `Invalid redirect_uri value`，請檢查 LINE Login channel 的 Callback URL 與正式網址完全一致：`https://你的正式網址/api/auth/line/callback`。程式會將 APP_ORIGIN 正規化，避免尾端斜線造成 `//api/auth/line/callback`；LINE Developers 仍需登記單一斜線的正確網址。
+
 管理員首次使用 LINE 登入後，`/#admin` 會顯示本人識別碼，加入 Cloudflare 的管理員白名單後重新載入。**登入本身不自動授予管理權限**。
 
 ## 4. 店家設定

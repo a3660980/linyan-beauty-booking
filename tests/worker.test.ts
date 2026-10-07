@@ -17,6 +17,49 @@ async function request(f:ReturnType<typeof fixture>,path:string,user:string|null
  const headers:Record<string,string>={Origin:origin};if(user)headers.Cookie='linyan_session='+await sign({id:user,name:'測試使用者',expires:Date.now()+3600000},f.env.AUTH_SECRET!);if(body)headers['Content-Type']='application/json';return worker.fetch(new Request('https://booking.test/api'+path,{method,headers,body:body?JSON.stringify(body):undefined}),f.env,f.ctx);
 }
 const payload=()=>({serviceId:'single',spec:0,addons:{lower:false,removal:'none'},date:taipeiDay(Date.now()+86400000),time:'10:00',customer:'測試客人',phone:'0900000000',note:''});
+test('LINE login uses the same canonical callback through authorization, token exchange and session return',async(t)=>{
+ const f=fixture();
+ try{
+  let authorization:URL|undefined,oauthCookie:string|undefined;
+  const env={...f.env,LINE_LOGIN_CHANNEL_ID:'test-login-id',LINE_LOGIN_CHANNEL_SECRET:'test-login-secret'};
+  for(const origin of ['https://booking.test','https://booking.test/','https://booking.test///']){
+   env.APP_ORIGIN=origin;
+   const response=await request({...f,env},'/auth/line?returnTo=admin');
+   assert.equal(response.status,302);
+   authorization=new URL(response.headers.get('location')!);
+   assert.equal(authorization.origin,'https://access.line.me');
+   assert.equal(authorization.searchParams.get('redirect_uri'),'https://booking.test/api/auth/line/callback');
+   assert.equal(authorization.searchParams.get('client_id'),env.LINE_LOGIN_CHANNEL_ID);
+   oauthCookie=response.headers.get('set-cookie')!.split(';')[0];
+  }
+  const calls:string[]=[];
+  t.mock.method(globalThis,'fetch',async(input:RequestInfo|URL,init?:RequestInit)=>{
+   const url=String(input);calls.push(url);
+   if(url==='https://api.line.me/oauth2/v2.1/token'){
+    const params=init!.body as URLSearchParams;
+    assert.equal(params.get('redirect_uri'),'https://booking.test/api/auth/line/callback');
+    assert.equal(params.get('client_id'),env.LINE_LOGIN_CHANNEL_ID);
+    assert.equal(params.get('client_secret'),env.LINE_LOGIN_CHANNEL_SECRET);
+    return Response.json({id_token:'test-id-token',access_token:'test-access-token'});
+   }
+   if(url==='https://api.line.me/oauth2/v2.1/verify')return Response.json({sub:'owner',name:'測試店家',nonce:authorization!.searchParams.get('nonce')});
+   if(url==='https://api.line.me/friendship/v1/status')return Response.json({friendFlag:true});
+   throw new Error('Unexpected outbound request');
+  });
+  const callback=new URL('https://booking.test/api/auth/line/callback');
+  callback.searchParams.set('state',authorization!.searchParams.get('state')!);
+  callback.searchParams.set('code','test-authorization-code');
+  const response=await worker.fetch(new Request(callback,{headers:{Cookie:oauthCookie!}}),env,f.ctx);
+  assert.equal(response.status,302);
+  assert.equal(response.headers.get('location'),'https://booking.test/#admin');
+  assert.deepEqual(calls,['https://api.line.me/oauth2/v2.1/token','https://api.line.me/oauth2/v2.1/verify','https://api.line.me/friendship/v1/status']);
+  const sessionCookie=response.headers.getSetCookie().find(value=>value.startsWith('linyan_session='))!.split(';')[0];
+  const me=await worker.fetch(new Request('https://booking.test/api/me',{headers:{Cookie:sessionCookie}}),env,f.ctx);
+  assert.deepEqual(await me.json(),{user:{id:'owner',name:'測試店家',friend:true,admin:true}});
+  const logout=await worker.fetch(new Request('https://booking.test/api/logout',{method:'POST',headers:{Origin:'https://booking.test',Cookie:sessionCookie}}),env,f.ctx);
+  assert.equal(logout.status,200);
+ }finally{f.db.close();}
+});
 test('signed sessions reject tampering, expired sessions and untrusted identity',async()=>{const f=fixture();const t=await sign({id:'test'},f.env.AUTH_SECRET!);assert.deepEqual(await verify(t,f.env.AUTH_SECRET),{id:'test'});assert.equal(await verify(t+'x',f.env.AUTH_SECRET),null);assert.equal((await request(f,'/admin','customer')).status,403);assert.equal((await request(f,'/bookings')).status,401);assert.equal((await request(f,'/bookings','customer','POST',payload(),'https://evil.test')).status,403);f.db.close();});
 test('two clients cannot reserve the same full occupied interval',async()=>{const f=fixture();const first=await request(f,'/bookings','customer','POST',payload());assert.equal(first.status,201);const second=await request(f,'/bookings','other','POST',{...payload(),time:'10:30'});assert.equal(second.status,409);const r=f.db.prepare('SELECT status,paid FROM bookings').get();assert.equal(r?.status,'pending');assert.equal(r?.paid,0);f.db.close();});
 test('SQLite overlap trigger prevents a race even without availability precheck',()=>{const f=fixture();const insert=f.db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,end,price,status,created_at,updated_at) VALUES(?, '測試', '0900000000','single','單根','100根','{}','2026-10-08',?,?,900,'pending',1,1)");insert.run('one',1000,2000);assert.throws(()=>insert.run('two',1500,2500),/SLOT_TAKEN/);insert.run('three',2000,3000);assert.throws(()=>f.db.prepare('UPDATE bookings SET start=1500 WHERE id=?').run('three'),/SLOT_TAKEN/);f.db.close();});
