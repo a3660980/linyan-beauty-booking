@@ -188,3 +188,122 @@ test('studio notices and combinable offers are readable on mobile with original 
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.screenshot({path:testInfo.outputPath('offers-mobile.png'),fullPage:true});
 });
+
+const bookingFixture={id:'test-booking',user_id:'customer',customer:'測試客人',phone:'0900000000',note:'',service_id:'single',service_name:'日式單根',spec:'100 根',date:'2026-11-02',start:Date.parse('2026-11-02T10:00:00+08:00'),end:Date.parse('2026-11-02T12:30:00+08:00'),price:900,status:'pending',version:1,paid:0,paid_amount:null};
+const adminFixture={services:SERVICES,settings:DEFAULT_SETTINGS,bookings:[bookingFixture],exceptions:[],notifications:[],ready:{login:true,notifications:true,webhook:true,session:true}};
+
+test('my bookings wait before showing empty, preserve rows during refresh and recover from failed queries',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
+ let release:()=>void=()=>{},gate=new Promise<void>(resolve=>{release=resolve}),call=0;
+ await page.route('**/api/bookings',async r=>{const current=++call;await gate;await r.fulfill(current===2?{status:503,json:{error:'暫時無法查詢預約'}}:{json:{bookings:current===1?[bookingFixture]:[]}})});
+ await page.goto('/#home');await page.locator('.nav a[href="#my"]').click();
+ await expect(page.getByRole('status',{name:'載入預約紀錄中…'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'還沒有預約紀錄'})).toHaveCount(0);
+ release();await expect(page.locator('.reservation')).toContainText('test-booking');
+ gate=new Promise<void>(resolve=>{release=resolve});
+ await page.getByRole('button',{name:'重新整理',exact:true}).click();
+ await expect(page.getByRole('status',{name:'更新預約紀錄中…'})).toBeVisible();
+ await expect(page.locator('.reservation')).toContainText('test-booking');
+ await expect(page.getByRole('button',{name:'取消預約',exact:true})).toBeDisabled();
+ release();await expect(page.getByRole('alert')).toContainText('暫時無法查詢預約');
+ await expect(page.locator('.reservation')).toHaveCount(1);
+ gate=new Promise<void>(resolve=>{release=resolve});
+ await page.getByRole('button',{name:'重新查詢',exact:true}).click();
+ await expect(page.getByRole('status',{name:'更新預約紀錄中…'})).toBeVisible();
+ release();await expect(page.getByRole('heading',{name:'還沒有預約紀錄'})).toBeVisible();
+ await expect(page.locator('.reservation')).toHaveCount(0);
+});
+
+test('admin tabs wait for their shared data and LINE quota has its own loading and retry',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ let release:()=>void=()=>{},gate=new Promise<void>(resolve=>{release=resolve}),calls=0;
+ await page.route('**/api/admin',async r=>{const call=++calls;await gate;await r.fulfill({json:{...adminFixture,bookings:call===1?[bookingFixture]:[]}})});
+ let quotaRelease:()=>void=()=>{},quotaGate=new Promise<void>(resolve=>{quotaRelease=resolve}),quotaCalls=0;
+ await page.route('**/api/admin/quota',async r=>{const call=++quotaCalls;await quotaGate;await r.fulfill(call===1?{status:503,json:{error:'額度查詢暫時中斷'}}:{json:{available:true,used:2,remaining:198,limit:200}})});
+ await page.goto('/#admin');
+ for(const tab of ['預約管理','行事曆','客人紀錄','收款管理','服務與排班','LINE 通知']){
+  await page.getByRole('button',{name:tab,exact:true}).click();
+  await expect(page.getByRole('status',{name:'載入後台資料中…'})).toBeVisible();
+  await expect(page.locator('.stat-grid,.calendar-panel,.admin-bookings,.client-record,.cash-row')).toHaveCount(0);
+ }
+ release();await expect(page.locator('.stat-grid')).toContainText('1');
+ await expect(page.getByRole('status',{name:'查詢 LINE 額度中…'})).toBeVisible();
+ await expect(page.getByText('LINE 推播金鑰尚未設定。示範操作不發送訊息。',{exact:true})).toHaveCount(0);
+ quotaRelease();await expect(page.getByRole('alert')).toContainText('額度查詢暫時中斷');
+ quotaGate=new Promise<void>(resolve=>{quotaRelease=resolve});
+ await page.getByRole('button',{name:'重新查詢',exact:true}).click();await expect(page.getByRole('status',{name:'查詢 LINE 額度中…'})).toBeVisible();
+ quotaRelease();await expect(page.locator('.notice-box')).toContainText('本月已使用 2 則・剩餘 198 則');
+ await page.getByRole('button',{name:'預約管理',exact:true}).click();
+ gate=new Promise<void>(resolve=>{release=resolve});await page.getByRole('button',{name:'重新整理',exact:true}).click();
+ await expect(page.getByRole('status',{name:'更新後台資料中…'})).toBeVisible();
+ await expect(page.locator('.admin-booking')).toContainText('測試客人');
+ await expect(page.locator('.admin-data')).toHaveAttribute('inert','');
+ release();await expect(page.getByRole('heading',{name:'目前沒有這類預約'})).toBeVisible();
+});
+
+test('only signed-in admins see management links and home service cards contain generated images',async({page},testInfo)=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ let role='guest';
+ await page.route('**/api/me',r=>r.fulfill({json:{user:role==='guest'?null:{id:role,name:'測試使用者',friend:true,admin:role==='owner'}}}));
+ for(const mode of ['guest','customer','owner']){
+  role=mode;await page.goto('/?role='+mode+'#home');await expect(page.locator('.hero')).toBeVisible();
+  await expect(page.locator('a[href="#admin"]')).toHaveCount(mode==='owner'?2:0);
+  await expect(page.locator('a[href="#demo-admin"]')).toHaveCount(0);
+  await page.getByRole('button',{name:'開啟選單'}).click();
+  if(mode==='owner')await expect(page.locator('.nav a[href="#admin"]')).toBeVisible();
+  await page.getByRole('button',{name:'開啟選單'}).click();
+ }
+ const images=page.locator('.service-photo img');await expect(images).toHaveCount(4);
+ await page.locator('.service-grid').scrollIntoViewIfNeeded();
+ for(const img of await images.all()){await img.scrollIntoViewIfNeeded();await expect(img).toHaveJSProperty('naturalWidth',1448);await img.evaluate(el=>(el as HTMLImageElement).decode())}
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.locator('.service-grid').screenshot({path:testInfo.outputPath('service-images-mobile.png')});
+ role='guest';await page.goto('/#admin');await expect(page.getByRole('link',{name:'LINE 店家登入'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'體驗示範後台'})).toHaveCount(0);
+});
+
+test('expired LINE callbacks show a login prompt inside the website and preserve the booking draft',async({page})=>{
+ await page.addInitScript(()=>sessionStorage.setItem('bookingDraft',JSON.stringify({serviceId:'single',spec:0,addons:{lower:false,removal:'none'},date:'2026-11-02',time:'11:00'})));
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
+ await page.goto('/?authError=expired#booking');
+ await expect(page.locator('.site-header')).toBeVisible();
+ await expect(page.locator('.auth-notice')).toContainText('登入驗證已失效，請重新登入');
+ await expect(page.getByRole('link',{name:'重新登入 LINE'})).toHaveAttribute('href','/api/auth/line?returnTo=booking');
+ await expect(page.locator('.booking-summary')).toContainText('2026-11-02 11:00');
+ expect(new URL(page.url()).searchParams.has('authError')).toBe(false);
+ await page.getByRole('button',{name:'關閉登入提示'}).click();await expect(page.locator('.auth-notice')).toHaveCount(0);
+ await page.goto('/?authError=expired#admin');
+ await expect(page.getByRole('link',{name:'重新登入 LINE'})).toHaveAttribute('href','/api/auth/line?returnTo=admin');
+});
+
+test('availability requests show loading and retry instead of flashing a closed day',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
+ let release:()=>void=()=>{},gate=new Promise<void>(resolve=>{release=resolve}),calls=0;
+ await page.route('**/api/availability/dates?*',async r=>{const call=++calls;await gate;const date=bookingDates(30)[2];await r.fulfill(call===1?{status:503,json:{error:'時段查詢暫時失敗'}}:{json:{days:bookingDates(30).map(d=>({date:d,slots:d===date?['10:00']:[]})),firstAvailableDate:date,duration:120}})});
+ await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();
+ await expect(page.getByText('查詢時段中…',{exact:true})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'目前沒有可預約日期'})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'填寫資料',exact:true})).toBeDisabled();
+ release();await expect(page.getByRole('alert')).toContainText('時段查詢暫時失敗');
+ gate=new Promise<void>(resolve=>{release=resolve});await page.getByRole('button',{name:'重新查詢',exact:true}).click();
+ await expect(page.getByText('查詢時段中…',{exact:true})).toBeVisible();
+ release();await expect(page.getByRole('button',{name:'10:00',exact:true})).toBeVisible();
+});
+
+test('an expired session during a query returns to the in-page login prompt',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
+ let expired=false;
+ await page.route('**/api/bookings',r=>r.fulfill(expired?{status:401,json:{error:'請先使用 LINE 登入'}}:{json:{bookings:[bookingFixture]}}));
+ await page.goto('/#my');await expect(page.locator('.reservation')).toHaveCount(1);
+ expired=true;await page.getByRole('button',{name:'重新整理',exact:true}).click();
+ await expect(page.locator('.auth-notice')).toContainText('登入驗證已失效');
+ await expect(page.getByRole('heading',{name:'登入後查看你的預約'})).toBeVisible();
+ await expect(page.getByRole('link',{name:'重新登入 LINE'})).toHaveAttribute('href','/api/auth/line?returnTo=my');
+ await expect(page.locator('.reservation')).toHaveCount(0);
+});

@@ -169,3 +169,24 @@ test('new studio policy migration updates the old default and preserves owner-wr
  assert.equal(JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string).policies,'店家自行填寫的規則');
  f.db.close();
 });
+
+test('LINE authentication errors return to the website with a safe prompt instead of a JSON error page',async(t)=>{
+ const f=fixture(),env={...f.env,LINE_LOGIN_CHANNEL_ID:'test-login-id',LINE_LOGIN_CHANNEL_SECRET:'test-login-secret',APP_ORIGIN:'https://booking.test/'};
+ try{
+  const invalid=await request({...f,env},'/auth/line/callback?state=invalid&code=invalid');
+  assert.equal(invalid.status,302);assert.equal(invalid.headers.get('location'),'https://booking.test/?authError=expired#booking');
+  assert.equal(await invalid.text(),'');assert.match(invalid.headers.get('set-cookie')!,/linyan_oauth=;.*Max-Age=0/);
+  const expired=await sign({state:'state',nonce:'nonce',returnTo:'admin',expires:Date.now()-1},env.AUTH_SECRET!);
+  const response=await worker.fetch(new Request('https://booking.test/api/auth/line/callback?state=state&code=test',{headers:{Cookie:'linyan_oauth='+expired}}),env,f.ctx);
+  assert.equal(response.headers.get('location'),'https://booking.test/?authError=expired#admin');
+  const cancelled=await request({...f,env},'/auth/line/callback?error=access_denied');
+  assert.equal(cancelled.headers.get('location'),'https://booking.test/?authError=cancelled#booking');
+  const unavailable=await request(f,'/auth/line?returnTo=admin');
+  assert.equal(unavailable.headers.get('location'),'https://booking.test/?authError=unavailable#admin');
+  const valid=await sign({state:'state',nonce:'nonce',returnTo:'my',expires:Date.now()+60000},env.AUTH_SECRET!);
+  t.mock.method(globalThis,'fetch',async()=>new Response(null,{status:401}));
+  const failed=await worker.fetch(new Request('https://booking.test/api/auth/line/callback?state=state&code=test',{headers:{Cookie:'linyan_oauth='+valid}}),env,f.ctx);
+  assert.equal(failed.headers.get('location'),'https://booking.test/?authError=failed#my');
+  assert.equal((await request(f,'/bookings')).status,401);
+ }finally{f.db.close()}
+});

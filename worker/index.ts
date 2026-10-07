@@ -26,7 +26,7 @@ function safeLink(value:string){return !value||/^https:\/\//.test(value)}
 async function authRoutes(req:Request,env:Env,path:string,origin:string):Promise<Response|null>{
  if(path==='/api/auth/line'){
   if(!env.LINE_LOGIN_CHANNEL_ID||!env.LINE_LOGIN_CHANNEL_SECRET||!env.AUTH_SECRET||env.AUTH_SECRET.length<32)fail('LINE 登入尚未設定，請聯絡店家',503);
-  const state=crypto.randomUUID(),nonce=crypto.randomUUID();const returnTo=new URL(req.url).searchParams.get('returnTo')==='admin'?'admin':'booking';
+  const state=crypto.randomUUID(),nonce=crypto.randomUUID();const requested=new URL(req.url).searchParams.get('returnTo');const returnTo=requested&&['admin','my'].includes(requested)?requested:'booking';
   const token=await sign({state,nonce,returnTo,expires:Date.now()+600000},env.AUTH_SECRET);const url=new URL('https://access.line.me/oauth2/v2.1/authorize');
   Object.entries({response_type:'code',client_id:env.LINE_LOGIN_CHANNEL_ID,redirect_uri:origin+'/api/auth/line/callback',state,scope:'openid profile',nonce,bot_prompt:'aggressive'}).forEach(([k,v])=>url.searchParams.set(k,v));
   return new Response(null,{status:302,headers:{Location:url.toString(),'Set-Cookie':cookie('linyan_oauth',token,600,origin.startsWith('https:'))}});
@@ -41,7 +41,7 @@ async function authRoutes(req:Request,env:Env,path:string,origin:string):Promise
   let friend=false;const fr=await fetch('https://api.line.me/friendship/v1/status',{headers:{Authorization:`Bearer ${t.access_token}`}});if(fr.ok)friend=(await fr.json() as {friendFlag:boolean}).friendFlag===true;
   await env.DB.prepare('INSERT INTO users(id,name,friend,updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,friend=excluded.friend,updated_at=excluded.updated_at').bind(identity.sub,identity.name||'LINE 使用者',friend?1:0,Date.now()).run();
   const tok=await sign({id:identity.sub,name:identity.name,expires:Date.now()+7*86400000},env.AUTH_SECRET!);
-  const headers=new Headers({Location:origin+'/#'+(o.returnTo==='admin'?'admin':'booking')});headers.append('Set-Cookie',cookie('linyan_session',tok,7*86400,origin.startsWith('https:')));headers.append('Set-Cookie',cookie('linyan_oauth','',0,origin.startsWith('https:')));return new Response(null,{status:302,headers});
+  const headers=new Headers({Location:origin+'/#'+(['admin','my'].includes(o.returnTo)?o.returnTo:'booking')});headers.append('Set-Cookie',cookie('linyan_session',tok,7*86400,origin.startsWith('https:')));headers.append('Set-Cookie',cookie('linyan_oauth','',0,origin.startsWith('https:')));return new Response(null,{status:302,headers});
  }return null;
 }
 async function pushNotifications(env:Env){
@@ -68,7 +68,15 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
    try{await env.DB.batch([env.DB.prepare('INSERT INTO webhook_events(id,created_at) VALUES(?,?)').bind(event.webhookEventId,Date.now()),env.DB.prepare('INSERT INTO users(id,name,friend,updated_at) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET friend=excluded.friend,updated_at=excluded.updated_at').bind(uid,'LINE 使用者',event.type==='follow'?1:0,Date.now())]);}catch{/* duplicate redelivery */}
   }return json({ok:true});
  }
- const auth=await authRoutes(req,env,path,origin);if(auth)return auth;
+ try{const auth=await authRoutes(req,env,path,origin);if(auth)return auth}catch(e){
+  if(!['/api/auth/line','/api/auth/line/callback'].includes(path))throw e;
+  const error=e as Error&{status?:number};
+  const previous=await verify<{returnTo:string}>(cookies(req).linyan_oauth,env.AUTH_SECRET);
+  const requested=previous?.returnTo||url.searchParams.get('returnTo');
+  const returnTo=requested&&['admin','my'].includes(requested)?requested:'booking';
+  const reason=url.searchParams.get('error')==='access_denied'?'cancelled':error.status===503?'unavailable':error.message.includes('已失效')?'expired':'failed';
+  return new Response(null,{status:302,headers:{Location:origin+'/?authError='+reason+'#'+returnTo,'Set-Cookie':cookie('linyan_oauth','',0,origin.startsWith('https:')),'Cache-Control':'no-store'}});
+ }
  const s=await session(req,env);
  if(path==='/api/me'&&method==='GET'){const user=s?await env.DB.prepare('SELECT friend FROM users WHERE id=?').bind(s.id).first<{friend:number}>():null;return json({user:s?{id:s.id,name:s.name,friend:user?.friend===1,admin:isAdmin(s,env)}:null});}
  if(path==='/api/public'&&method==='GET'){const config=await settings(env),items=await services(env);return json({settings:config,services:items.filter(x=>x.active),lineReady:!!env.LINE_LOGIN_CHANNEL_ID&&!!env.LINE_LOGIN_CHANNEL_SECRET&&!!env.AUTH_SECRET,lineUrl:env.LINE_ADD_FRIEND_URL||config.lineUrl});}

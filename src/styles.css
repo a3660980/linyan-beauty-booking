@@ -81,3 +81,22 @@ input::-webkit-datetime-edit{min-width:0;padding:0}
 .booking-policy-notice .text-link{font-size:11px;margin-top:10px}
 .booking-offer-note{font-size:11px;line-height:1.8;margin-top:14px;margin-bottom:0;color:#947b6b}
 @media(max-width:600px){.offer-cards{grid-template-columns:1fr;gap:14px}.offer-card{padding:24px 22px}.offer-card h3{font-size:21px}.offer-card p{font-size:12px}.studio-offers .section-heading h2{font-size:24px}.care-list li{font-size:12px;padding-left:32px}.care-list li:before{font-size:15px}.care-tabs button{padding:12px 14px}.booking-policy-notice p{font-size:11px}.booking-offer-note{font-size:10px}}
+.data-loading{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;min-height:240px;padding:36px 20px;text-align:center}
+.data-loading p{margin:0;color:var(--muted);font-size:13px}
+.data-loading .loading-spinner{flex-shrink:0}
+.data-loading.compact{flex-direction:row;justify-content:flex-start;gap:12px;min-height:0;padding:16px 0;text-align:left}
+.data-loading.compact .loading-spinner{width:20px;height:20px}
+.data-error{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;min-height:220px;padding:28px 20px;border:1px solid var(--line);background:var(--cream);text-align:center}
+.data-error p{margin:0;overflow-wrap:anywhere}
+.data-error.compact{flex-direction:row;justify-content:space-between;min-height:0;padding:16px;margin-bottom:18px;text-align:left;flex-wrap:wrap}
+.admin-data[aria-busy="true"]{opacity:.65}
+.my-toolbar{display:flex;justify-content:flex-end;margin-bottom:14px}
+.auth-notice{display:flex;align-items:center;gap:14px;padding:18px 22px;margin-top:20px;background:var(--cream);border:1px solid var(--line)}
+.auth-notice p{flex:1;margin:0;font-size:13px}
+.auth-notice>svg,.auth-notice>.icon-button{flex-shrink:0}
+.service-art.service-photo{overflow:hidden;isolation:isolate}
+.service-art.service-photo:before{display:none}
+.service-photo>img{display:block;width:100%;height:100%;object-fit:cover}
+.service-photo .illustration-label{position:absolute;left:12px;bottom:10px;background:#fcfaf7e6;padding:4px 7px;border-radius:3px;font-size:9px;color:var(--rose-dark);letter-spacing:1px}
+.service-photo>span{background:#fcfaf7dc;padding:2px 5px;border-radius:3px;bottom:10px;right:12px}
+@media(max-width:600px){.auth-notice{gap:10px;flex-wrap:wrap;padding:15px}.auth-notice p{font-size:11px;min-width:180px}.auth-notice>.button{margin-left:30px}.service-photo .illustration-label{left:8px;bottom:8px;font-size:8px;padding:3px 5px}.service-photo>span{bottom:8px;right:8px}}
