@@ -22,8 +22,15 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - run: npm run check
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium webkit
       - run: npm run test:ui
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mobile-browser-previews
+          path: test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
       - run: npm run config:deploy
         env:
           CLOUDFLARE_D1_DATABASE_ID: 00000000-0000-0000-0000-000000000000

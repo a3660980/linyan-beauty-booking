@@ -25,10 +25,12 @@ export default function DateScheduleEditor({date,setDate,settings,exceptions,row
   <p className="schedule-source">目前：{source?'指定日期排班':current.length?'使用固定排班':'未開放預約'}</p>
   <label className="consent"><input type="checkbox" checked={closed} disabled={busy} onChange={e=>{setClosed(e.target.checked);if(!windows.length)setWindows([['10:00','18:00']]);setError('')}}/>全天休息</label>
   {!closed&&<><div className="schedule-windows">{windows.map(([from,to],i)=><div className="schedule-window" key={i}>
+   <div className="schedule-window-heading"><strong>區段 {i+1}</strong><button className="icon-button" aria-label={`刪除區段 ${i+1}`} disabled={busy} onClick={()=>{const next=windows.filter((_,j)=>j!==i);setWindows(next);if(!next.length)setClosed(true)}}><X size={17}/></button></div>
+   <div className="schedule-window-times">
    <label className="field"><span>區段 {i+1} 開始時間</span><input type="time" required value={from} disabled={busy} onChange={e=>change(i,0,e.target.value)}/></label>
    <span className="schedule-to">至</span>
    <label className="field"><span>區段 {i+1} 結束時間</span><input type="time" required value={to} disabled={busy} onChange={e=>change(i,1,e.target.value)}/></label>
-   <button className="icon-button" aria-label={`刪除區段 ${i+1}`} disabled={busy} onClick={()=>{const next=windows.filter((_,j)=>j!==i);setWindows(next);if(!next.length)setClosed(true)}}><X size={17}/></button>
+   </div>
   </div>)}</div><button className="text-link" disabled={busy||windows.length>=5} onClick={add}><Plus size={16}/>新增時間區段</button><p className="muted">每天最多 5 個區段，可分開安排上午、下午或午休。</p></>}
   {affected.length>0&&<div className="notice-box schedule-conflicts"><AlertCircle size={19}/><div><p>此設定影響 {affected.length} 筆既有預約。預約會保留，請確認安排並聯絡客人。</p>{affected.map(b=><small key={b.id}>{b.customer} · {new Date(b.start+8*3600000).toISOString().slice(11,16)} · {b.service_name}</small>)}</div></div>}
   {error&&<div className="error-box" role="alert">{error}</div>}

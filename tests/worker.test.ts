@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import worker from '../worker/index.ts';
 import {sign,verify,validLineSignature,type Env} from '../worker/security.ts';
-import {DEFAULT_SETTINGS,SERVICES,taipeiDay} from '../src/domain.ts';
+import {DEFAULT_SETTINGS,SERVICES,taipeiDay,offsetDate,taipeiMs,type AvailabilityDates} from '../src/domain.ts';
 class Statement {
  constructor(public db:DatabaseSync,public sql:string,public args:unknown[]=[]){ }
  bind(...args:unknown[]){return new Statement(this.db,this.sql,args)}
@@ -68,6 +68,39 @@ test('expired requests release slots and cannot be approved',async()=>{const f=f
 test('unset durations, unverified friendships and invalid settings block writes',async()=>{const f=fixture();f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify({...SERVICES[0],duration:null}),'single');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,409);f.db.prepare('UPDATE users SET friend=0 WHERE id=?').run('customer');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,403);assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,stepMinutes:0})).status,400);f.db.close();});
 test('webhook body signatures are validated',async()=>{const secret='test webhook signing value';const raw='{"events":[]}';const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',k,new TextEncoder().encode(raw)));const sig=btoa(String.fromCharCode(...bytes));assert.equal(await validLineSignature(raw,sig,secret),true);assert.equal(await validLineSignature(raw+' ',sig,secret),false);const f=fixture();assert.equal((await request(f,'/line/webhook',null,'POST',{events:[]})).status,401);f.db.close();});
 
+test('nearest available dates respect full duration, occupied slots, expiry and booking horizon without exposing customers',async(t)=>{
+ t.mock.method(Date,'now',()=>Date.parse('2026-10-07T00:00:00+08:00'));
+ const f=fixture(),first=taipeiDay(),blocked=offsetDate(first,2),open=offsetDate(first,10);
+ try{
+  f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,bookingDays:12}));
+  f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify(SERVICES[0]),'single');
+  for(const [date,windows] of [[offsetDate(first,1),[['10:00','12:00']]],[blocked,[['10:00','12:30']]],[open,[['10:00','13:00']]],[offsetDate(first,12),[['10:00','18:00']]]] as const){
+   f.db.prepare('INSERT INTO exceptions VALUES(?,?)').run(date,JSON.stringify(windows));
+  }
+  f.db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,end,price,status,created_at,updated_at) VALUES('occupied','秘密客人','0900000000','single','日式單根','100 根','{}',?,?,?,900,'confirmed',1,1)").run(blocked,taipeiMs(blocked,'10:00'),taipeiMs(blocked,'12:30'));
+  const get=async(query='')=>await (await request(f,'/availability/dates?service=single'+query)).json() as AvailabilityDates;
+  const result=await get();
+  assert.equal(result.days.length,12);assert.equal(result.firstAvailableDate,open);
+  assert.deepEqual(result.days.find(d=>d.date===offsetDate(first,1))?.slots,[]);
+  assert.deepEqual(result.days.find(d=>d.date===blocked)?.slots,[]);
+  assert.deepEqual(result.days.find(d=>d.date===open)?.slots,['10:00','10:30']);
+  assert.ok(result.days.every(d=>Object.keys(d).sort().join(',')==='date,slots'));
+  assert.ok(!JSON.stringify(result).includes('秘密客人'));
+  assert.equal(result.days.at(-1)?.date,offsetDate(first,11));
+  const single=await (await request(f,`/availability?service=single&date=${open}`)).json() as {slots:string[]};
+  assert.deepEqual(single.slots,result.days.find(d=>d.date===open)?.slots);
+  assert.deepEqual((await get('&lower=true')).days.find(d=>d.date===open)?.slots,['10:00']);
+  assert.equal((await get('&lower=true&removal=own')).firstAvailableDate,null);
+  f.db.prepare("UPDATE bookings SET status='pending',expires_at=1 WHERE id='occupied'").run();
+  assert.equal((await get()).firstAvailableDate,blocked);
+  assert.equal(f.db.prepare("SELECT status FROM bookings WHERE id='occupied'").get()?.status,'expired');
+  assert.equal((await request(f,'/availability/dates?service=missing')).status,404);
+  assert.equal((await request(f,'/availability/dates?service=brows&lower=true')).status,400);
+  f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify({...SERVICES[0],duration:null}),'single');
+  const unset=await get();assert.equal(unset.firstAvailableDate,null);assert.deepEqual(unset.days,[]);assert.ok(unset.reason);
+ }finally{f.db.close();}
+});
+
 test('date schedules open split windows without weekly shifts, and closure preserves existing bookings',async()=>{
  const f=fixture(),date=payload().date;
  const cfg={...DEFAULT_SETTINGS,leadHours:0};
@@ -121,5 +154,18 @@ test('remaining-duration migration updates saved settings while preserving booki
  assert.equal(publicData.services.find(s=>s.id==='color-removal')?.specs[0].price,2500);
  assert.deepEqual(publicData.settings,{...settings,addonDurations:{...settings.addonDurations,lower:30}});
  assert.deepEqual(f.db.prepare('SELECT * FROM bookings').get(),booking);
+ f.db.close();
+});
+
+test('new studio policy migration updates the old default and preserves owner-written notices',()=>{
+ const f=fixture(),sql=readFileSync(new URL('../migrations/0004_studio_booking_policy.sql',import.meta.url),'utf8');
+ const settings=JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string);
+ const previous='預約須經店家確認後才正式成立。到店以現金付款。取消、改期與遲到規則請於預約前向店家確認。';
+ f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...settings,policies:previous}));
+ f.db.exec(sql);
+ assert.deepEqual(JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string),settings);
+ f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...settings,policies:'店家自行填寫的規則'}));
+ f.db.exec(sql);
+ assert.equal(JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string).policies,'店家自行填寫的規則');
  f.db.close();
 });

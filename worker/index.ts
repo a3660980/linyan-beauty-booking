@@ -1,4 +1,4 @@
-import {SERVICES,DEFAULT_SETTINGS,availableSlots,normalizeWindows,withinCalendarMonths,weekday,taipeiMs,taipeiDay,serviceDuration,priceFor,statusLabel,type Settings,type Service,type Addons} from '../src/domain.ts';
+import {SERVICES,DEFAULT_SETTINGS,availableSlots,bookingDates,windowsForDate,normalizeWindows,withinCalendarMonths,weekday,taipeiMs,taipeiDay,serviceDuration,priceFor,statusLabel,type DateSchedule,type Settings,type Service,type Addons} from '../src/domain.ts';
 import {sign,verify,session,isAdmin,cookies,cookie,validLineSignature,sameOrigin,type Env,type Session} from './security.ts';
 type Booking={id:string;user_id:string|null;customer:string;phone:string;note:string;service_id:string;service_name:string;spec:string;addons:string;date:string;start:number;end:number;price:number;price_confirmed:number;status:string;expires_at:number|null;created_at:number;updated_at:number;paid:number;paid_amount:number|null;previous_id:string|null;group_code:string|null;companion:string;version:number};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
@@ -72,9 +72,18 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
  const s=await session(req,env);
  if(path==='/api/me'&&method==='GET'){const user=s?await env.DB.prepare('SELECT friend FROM users WHERE id=?').bind(s.id).first<{friend:number}>():null;return json({user:s?{id:s.id,name:s.name,friend:user?.friend===1,admin:isAdmin(s,env)}:null});}
  if(path==='/api/public'&&method==='GET'){const config=await settings(env),items=await services(env);return json({settings:config,services:items.filter(x=>x.active),lineReady:!!env.LINE_LOGIN_CHANNEL_ID&&!!env.LINE_LOGIN_CHANNEL_SECRET&&!!env.AUTH_SECRET,lineUrl:env.LINE_ADD_FRIEND_URL||config.lineUrl});}
- if(path==='/api/availability'&&method==='GET'){
-  const date=url.searchParams.get('date')||'';taipeiMs(date,'00:00');const item=(await services(env)).find(x=>x.id===url.searchParams.get('service')&&x.active);if(!item)fail('服務不存在',404);const a: Addons={lower:url.searchParams.get('lower')==='true',removal:(url.searchParams.get('removal')||'none') as Addons['removal']};addonInput(a);priceFor(item,0,a);
-  const cfg=await settings(env),duration=serviceDuration(item,a,cfg);if(!duration)return json({slots:[],reason:'店家尚未設定此服務時間'});await expire(env);
+ if(['/api/availability','/api/availability/dates'].includes(path)&&method==='GET'){
+  const range=path.endsWith('/dates'),date=url.searchParams.get('date')||'';if(!range)taipeiMs(date,'00:00');const item=(await services(env)).find(x=>x.id===url.searchParams.get('service')&&x.active);if(!item)fail('服務不存在',404);const a: Addons={lower:url.searchParams.get('lower')==='true',removal:(url.searchParams.get('removal')||'none') as Addons['removal']};addonInput(a);try{priceFor(item,0,a)}catch(e){fail((e as Error).message)}
+  const cfg=await settings(env),duration=serviceDuration(item,a,cfg);if(!duration)return json(range?{days:[],firstAvailableDate:null,duration:null,reason:'店家尚未設定此服務時間'}:{slots:[],reason:'店家尚未設定此服務時間'});await expire(env);
+  if(range){
+   const now=Date.now(),dates=bookingDates(cfg.bookingDays,now),first=dates[0],last=dates.at(-1)!;
+   const [exceptions,occupied]=await Promise.all([
+    env.DB.prepare('SELECT date,windows FROM exceptions WHERE date>=? AND date<=?').bind(first,last).all<DateSchedule>(),
+    env.DB.prepare("SELECT date,start,end FROM bookings WHERE date>=? AND date<=? AND status IN ('pending','confirmed')").bind(first,last).all<{date:string;start:number;end:number}>()
+   ]);
+   const days=dates.map(d=>({date:d,slots:availableSlots(d,duration,cfg,windowsForDate(d,cfg.weekly,exceptions.results),occupied.results.filter(b=>b.date===d),now)}));
+   return json({days,firstAvailableDate:days.find(d=>d.slots.length)?.date??null,duration});
+  }
   return json({slots:availableSlots(date,duration,cfg,await windows(env,date,cfg),await occupied(env,date)),duration});
  }
  if(!['GET','HEAD'].includes(method)){if(!sameOrigin(req,origin))fail('請從網站頁面操作',403);await rateLimit(req,env);}
@@ -122,14 +131,14 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
   if(next==='confirmed'&&b.service_id==='touchup'&&price!==0)fail('符合三個月內補色資格時應為免費',409);
   if(next==='confirmed'&&b.service_id==='brows'&&b.spec.includes('兩人')){const linked=await env.DB.prepare("SELECT id FROM bookings WHERE group_code=? AND id<>? AND service_id='brows' AND status IN ('pending','confirmed','completed')").bind(b.group_code,b.id).first();if(!linked)fail('同行優惠需先建立第二位客人的關聯預約',409);}
   const r=await env.DB.prepare('UPDATE bookings SET status=?,price=?,price_confirmed=1,paid=?,paid_amount=?,paid_at=?,updated_at=?,version=version+1 WHERE id=? AND version=?').bind(next,price,paid,paidAmount,paid?Date.now():null,Date.now(),b.id,version).run();if(!r.meta.changes)fail('預約已被更新',409);
-  await audit(env,s,`booking_${next}`,b.id);if(next!==b.status&&['confirmed','rejected','cancelled'].includes(next))await notify(env,b,next,next==='confirmed'?`您的預約已確認 ✨\n日期：${b.date}\n時間：${new Date(b.start+8*3600000).toISOString().slice(11,16)}\n服務：${b.service_name} ${b.spec}\n金額：NT$${price}\n付款：到店付現\n${(await settings(env)).address}`:next==='rejected'?'很抱歉，此次預約未能成立，請重新選擇時段或聯絡店家。':'您的預約已由店家取消，請聯絡店家確認。',origin);
+  await audit(env,s,`booking_${next}`,b.id);if(next!==b.status&&['confirmed','rejected','cancelled'].includes(next))await notify(env,b,next,next==='confirmed'?`您的預約已確認 ✨\n日期：${b.date}\n時間：${new Date(b.start+8*3600000).toISOString().slice(11,16)}\n服務：${b.service_name} ${b.spec}\n金額：NT$${price}\n付款：現金或當下匯款\n${(await settings(env)).address}`:next==='rejected'?'很抱歉，此次預約未能成立，請重新選擇時段或聯絡店家。':'您的預約已由店家取消，請聯絡店家確認。',origin);
   ctx.waitUntil(pushNotifications(env));return json({ok:true});
  }
  if(path==='/api/admin/retry'&&method==='POST'){
   const d=await body(req),id=text(d.id,80,true);await env.DB.prepare("UPDATE notifications SET state='queued',attempts=0,retry_at=0 WHERE id=? AND state='failed' AND lease_until<?").bind(id,Date.now()).run();await audit(env,s,'retry_notification');ctx.waitUntil(pushNotifications(env));return json({ok:true});
  }
  if(path==='/api/admin/export'&&method==='GET'){
-  const rows=await env.DB.prepare('SELECT * FROM bookings ORDER BY start DESC').all<Booking>();const cell=(v:unknown)=>{let t=String(v??'');if(/^[=+\-@\t\r]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"'};const lines=[['預約編號','日期','時間','姓名','電話','服務','規格','狀態','應付','已收現金'],...rows.results.map(b=>[b.id,b.date,new Date(b.start+8*3600000).toISOString().slice(11,16),b.customer,b.phone,b.service_name,b.spec,statusLabel[b.status],b.price,b.paid?b.paid_amount:0])];await audit(env,s,'export_bookings');return new Response('\ufeff'+lines.map(row=>row.map(cell).join(',')).join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="bookings.csv"','Cache-Control':'no-store'}});
+  const rows=await env.DB.prepare('SELECT * FROM bookings ORDER BY start DESC').all<Booking>();const cell=(v:unknown)=>{let t=String(v??'');if(/^[=+\-@\t\r]/.test(t))t="'"+t;return '"'+t.replace(/"/g,'""')+'"'};const lines=[['預約編號','日期','時間','姓名','電話','服務','規格','狀態','應付','已收款'],...rows.results.map(b=>[b.id,b.date,new Date(b.start+8*3600000).toISOString().slice(11,16),b.customer,b.phone,b.service_name,b.spec,statusLabel[b.status],b.price,b.paid?b.paid_amount:0])];await audit(env,s,'export_bookings');return new Response('\ufeff'+lines.map(row=>row.map(cell).join(',')).join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="bookings.csv"','Cache-Control':'no-store'}});
  }fail('找不到此功能',404);
 }
 async function createBooking(req:Request,env:Env,s:Session,admin:boolean){
@@ -141,7 +150,7 @@ async function createBooking(req:Request,env:Env,s:Session,admin:boolean){
  if(admin)await audit(env,s,'manual_booking',id);return json({ok:true,id,groupCode:group,status:'pending'},201);
 }
 async function notify(env:Env,b:Pick<Booking,'id'|'user_id'>,kind:string,message:string,origin:string){if(!b.user_id)return;await env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),b.id,b.user_id,kind,message+'\n查看預約：'+origin+'/#my').run();}
-async function scheduled(env:Env){if(!env.DB)return;await expire(env);const cfg=await settings(env);if(cfg.reminders){const now=Date.now();await env.DB.prepare("INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) SELECT lower(hex(randomblob(16))),id,user_id,'reminder','提醒您明日的預約：'||date||' '||service_name||'。到店現金付款，詳情請至我的預約查看。' FROM bookings WHERE status='confirmed' AND user_id IS NOT NULL AND start BETWEEN ? AND ?").bind(now+23*3600000,now+24*3600000).run();}await pushNotifications(env);await env.DB.batch([env.DB.prepare('DELETE FROM request_limits WHERE expires<?').bind(Date.now()),env.DB.prepare('DELETE FROM webhook_events WHERE created_at<?').bind(Date.now()-30*86400000)]);}
+async function scheduled(env:Env){if(!env.DB)return;await expire(env);const cfg=await settings(env);if(cfg.reminders){const now=Date.now();await env.DB.prepare("INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) SELECT lower(hex(randomblob(16))),id,user_id,'reminder','提醒您明日的預約：'||date||' '||service_name||'。現金或當下匯款，詳情請至我的預約查看。' FROM bookings WHERE status='confirmed' AND user_id IS NOT NULL AND start BETWEEN ? AND ?").bind(now+23*3600000,now+24*3600000).run();}await pushNotifications(env);await env.DB.batch([env.DB.prepare('DELETE FROM request_limits WHERE expires<?').bind(Date.now()),env.DB.prepare('DELETE FROM webhook_events WHERE created_at<?').bind(Date.now()-30*86400000)]);}
 export default {
  async fetch(req:Request,env:Env,ctx:ExecutionContext){try{let response=new URL(req.url).pathname.startsWith('/api/')?await api(req,env,ctx):await env.ASSETS.fetch(req);response=new Response(response.body,response);response.headers.set('X-Content-Type-Options','nosniff');response.headers.set('Referrer-Policy','strict-origin-when-cross-origin');response.headers.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');response.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");return response;}catch(e){const error=e as Error&{status?:number};return json({error:error.status?error.message:'系統暫時無法處理，請稍後再試'},error.status||500);}},
  async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext){ctx.waitUntil(scheduled(env));}
