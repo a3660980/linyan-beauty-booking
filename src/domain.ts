@@ -14,6 +14,21 @@ export const SERVICES:Service[] = [
 export type Settings = {address:string;instagram:string;lineUrl:string;bookingDays:number;leadHours:number;cancelHours:number;approvalHours:number;bufferMinutes:number;stepMinutes:number;reminders:boolean;addonDurations:{lower:number|null;own:number|null;other:number|null};weekly:Record<string,[string,string][]>;policies:string};
 export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:15,stepMinutes:30,reminders:false,addonDurations:{lower:null,own:null,other:null},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。到店以現金付款。取消、改期與遲到規則請於預約前向店家確認。'};
 export type Addons={lower:boolean;removal:'none'|'own'|'other'};
+export type TimeWindow=[string,string];
+export type DateSchedule={date:string;windows:string};
+export function normalizeWindows(value:unknown):TimeWindow[]{
+ if(!Array.isArray(value)||value.length>5)throw new Error('每天最多設定 5 個時間區段');
+ const result=value.map(v=>{
+  if(!Array.isArray(v)||v.length!==2||v.some(t=>typeof t!=='string'||!/^([01]\d|2[0-3]):[0-5]\d$/.test(t))||v[0]>=v[1])throw new Error('開始時間須早於結束時間，且在同一天');
+  return [v[0],v[1]] as TimeWindow;
+ }).sort((a,b)=>a[0].localeCompare(b[0]));
+ for(let i=1;i<result.length;i++)if(result[i][0]<result[i-1][1])throw new Error('時間區段不能重疊');
+ return result;
+}
+export function windowsForDate(date:string,weekly:Settings['weekly'],exceptions:DateSchedule[]):TimeWindow[]{
+ const override=exceptions.find(x=>x.date===date);
+ return override?JSON.parse(override.windows):weekly[String(weekday(date))]||[];
+}
 export function priceFor(service:Service,spec:number,addons:Addons){
  if(!Number.isInteger(spec)||!service.specs[spec])throw new Error('請選擇有效的服務規格');
  if(service.category!=='lashes'&& (addons.lower||addons.removal!=='none'))throw new Error('此服務不適用美睫加購');

@@ -24,3 +24,37 @@ test('customers cannot read or cancel another user booking; approval is not paym
 test('expired requests release slots and cannot be approved',async()=>{const f=fixture();const c=await (await request(f,'/bookings','customer','POST',payload())).json() as {id:string};f.db.prepare('UPDATE bookings SET expires_at=1 WHERE id=?').run(c.id);assert.equal((await request(f,`/admin/bookings/${c.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,409);const available=await (await request(f,`/availability?service=single&date=${payload().date}`)).json() as {slots:string[]};assert.ok(available.slots.includes('10:00'));assert.equal(f.db.prepare('SELECT status FROM bookings').get()?.status,'expired');f.db.close();});
 test('unset durations, unverified friendships and invalid settings block writes',async()=>{const f=fixture();f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify(SERVICES[0]),'single');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,409);f.db.prepare('UPDATE users SET friend=0 WHERE id=?').run('customer');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,403);assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,stepMinutes:0})).status,400);f.db.close();});
 test('webhook body signatures are validated',async()=>{const secret='test webhook signing value';const raw='{"events":[]}';const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',k,new TextEncoder().encode(raw)));const sig=btoa(String.fromCharCode(...bytes));assert.equal(await validLineSignature(raw,sig,secret),true);assert.equal(await validLineSignature(raw+' ',sig,secret),false);const f=fixture();assert.equal((await request(f,'/line/webhook',null,'POST',{events:[]})).status,401);f.db.close();});
+
+test('date schedules open split windows without weekly shifts, and closure preserves existing bookings',async()=>{
+ const f=fixture(),date=payload().date;
+ const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ assert.equal((await request(f,'/admin/settings','owner','PUT',cfg)).status,200);
+ const availability=async()=>await (await request(f,`/availability?service=single&date=${date}`)).json() as {slots:string[]};
+ assert.deepEqual((await availability()).slots,[]);
+ const windows=[['15:00','18:00'],['10:00','12:00']];
+ assert.equal((await request(f,'/admin/exceptions','customer','PUT',{date,windows})).status,403);
+ assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date,windows})).status,200);
+ assert.deepEqual((await availability()).slots,['10:00','15:00','15:30','16:00']);
+ assert.equal((await request(f,'/bookings','customer','POST',{...payload(),time:'12:00'})).status,409);
+ assert.equal((await request(f,'/bookings','customer','POST',payload())).status,201);
+ assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date,windows:[]})).status,200);
+ assert.deepEqual((await availability()).slots,[]);
+ assert.equal(f.db.prepare('SELECT status FROM bookings').get()?.status,'pending');
+ assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date,remove:true})).status,200);
+ assert.deepEqual((await availability()).slots,[]);
+ const weekly=Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]));
+ assert.equal((await request(f,'/admin/settings','owner','PUT',{...cfg,weekly})).status,200);
+ assert.ok((await availability()).slots.includes('14:00'));
+ assert.ok(!(await availability()).slots.includes('10:00'));
+ f.db.close();
+});
+test('invalid date schedule writes leave the saved schedule unchanged',async()=>{
+ const f=fixture(),date=payload().date,windows=[['10:00','12:00'],['15:00','18:00']];
+ assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date,windows})).status,200);
+ for(const invalid of [[['10:00','12:00'],['11:00','13:00']],[['18:00','10:00']],[['10:00','10:00']],[['10:00','24:00']],Array.from({length:6},()=>['10:00','12:00'])]){
+  assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date,windows:invalid})).status,400);
+ }
+ assert.equal((await request(f,'/admin/exceptions','owner','PUT',{date:'2026-02-30',windows})).status,400);
+ assert.equal(f.db.prepare('SELECT windows FROM exceptions WHERE date=?').get(date)?.windows,JSON.stringify(windows));
+ f.db.close();
+});
