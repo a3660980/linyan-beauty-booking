@@ -193,11 +193,12 @@ const bookingFixture={id:'test-booking',user_id:'customer',customer:'測試客�
 const adminFixture={services:SERVICES,settings:DEFAULT_SETTINGS,bookings:[bookingFixture],exceptions:[],notifications:[],ready:{login:true,notifications:true,webhook:true,session:true}};
 
 test('my bookings wait before showing empty, preserve rows during refresh and recover from failed queries',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
  await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
  await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
  let release:()=>void=()=>{},gate=new Promise<void>(resolve=>{release=resolve}),call=0;
  await page.route('**/api/bookings',async r=>{const current=++call;await gate;await r.fulfill(current===2?{status:503,json:{error:'暫時無法查詢預約'}}:{json:{bookings:current===1?[bookingFixture]:[]}})});
- await page.goto('/#home');await page.locator('.nav a[href="#my"]').click();
+ await page.goto('/#home');await page.getByRole('button',{name:'開啟選單'}).click();await page.locator('.nav a[href="#my"]').click();
  await expect(page.getByRole('status',{name:'載入預約紀錄中…'})).toBeVisible();
  await expect(page.getByRole('heading',{name:'還沒有預約紀錄'})).toHaveCount(0);
  release();await expect(page.locator('.reservation')).toContainText('test-booking');
