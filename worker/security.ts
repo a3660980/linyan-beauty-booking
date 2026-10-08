@@ -8,7 +8,8 @@ export async function sign(data:unknown,secret:string){const payload=base64url(e
 export async function verify<T>(token:string|undefined,secret:string|undefined):Promise<T|null>{if(!token||!secret)return null;try{const [p,s,...rest]=token.split('.');if(rest.length||!p||!s)return null;if(!await crypto.subtle.verify('HMAC',await key(secret),decode64(s),enc.encode(p)))return null;return JSON.parse(new TextDecoder().decode(decode64(p))) as T;}catch{return null;}}
 export function cookies(req:Request){return Object.fromEntries((req.headers.get('cookie')||'').split(';').map(x=>{const i=x.indexOf('=');return [x.slice(0,i).trim(),x.slice(i+1)]}));}
 export async function session(req:Request,env:Env){const s=await verify<Session>(cookies(req).linyan_session,env.AUTH_SECRET);return s&&s.expires>Date.now()?s:null;}
-export function isAdmin(s:Session|null,env:Env){return !!s&&!!env.ADMIN_LINE_USER_IDS?.split(',').map(x=>x.trim()).filter(Boolean).includes(s.id)}
+export function isAdminId(id:string,env:Env){return !!env.ADMIN_LINE_USER_IDS?.split(',').map(x=>x.trim()).filter(Boolean).includes(id)}
+export function isAdmin(s:Session|null,env:Env){return !!s&&isAdminId(s.id,env)}
 export function cookie(name:string,value:string,seconds:number,secure=true){return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${seconds}${secure?'; Secure':''}`;}
 export async function validLineSignature(body:string,signature:string|null,secret:string|undefined){if(!signature||!secret)return false;try{return await crypto.subtle.verify('HMAC',await key(secret),Uint8Array.from(atob(signature),c=>c.charCodeAt(0)),enc.encode(body));}catch{return false;}}
 export function sameOrigin(req:Request,origin:string){return req.headers.get('origin')===origin;}

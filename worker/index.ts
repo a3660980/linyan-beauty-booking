@@ -1,5 +1,6 @@
 import {SERVICES,DEFAULT_SETTINGS,availableSlots,bookingDates,windowsForDate,normalizeWindows,withinCalendarMonths,weekday,taipeiMs,taipeiDay,serviceDuration,priceFor,statusLabel,type DateSchedule,type Settings,type Service,type Addons} from '../src/domain.ts';
 import {sign,verify,session,isAdmin,cookies,cookie,validLineSignature,sameOrigin,type Env,type Session} from './security.ts';
+import {calendarFeed,manageCalendarSubscription} from './calendar.ts';
 type Booking={id:string;user_id:string|null;customer:string;phone:string;note:string;service_id:string;service_name:string;spec:string;addons:string;date:string;start:number;end:number;price:number;price_confirmed:number;status:string;expires_at:number|null;created_at:number;updated_at:number;paid:number;paid_amount:number|null;previous_id:string|null;group_code:string|null;companion:string;version:number};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 function fail(message:string,status=400):never{throw Object.assign(new Error(message),{status})}
@@ -96,6 +97,8 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
  }
  if(!['GET','HEAD'].includes(method)){if(!sameOrigin(req,origin))fail('請從網站頁面操作',403);await rateLimit(req,env);}
  if(path==='/api/logout'&&method==='POST')return new Response('{}',{headers:{'Content-Type':'application/json','Set-Cookie':cookie('linyan_session','',0,origin.startsWith('https:'))}});
+ const feed=path.match(/^\/api\/calendar\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\.ics$/);
+ if(path.startsWith('/api/calendar/')&&['GET','HEAD'].includes(method))return calendarFeed(req,env,feed?.[1]||'',origin);
  if(!s)fail('請先使用 LINE 登入',401);
  if(path==='/api/bookings'&&method==='GET'){await expire(env);const rows=await env.DB.prepare('SELECT * FROM bookings WHERE user_id=? ORDER BY start DESC LIMIT 100').bind(s.id).all<Booking>();return json({bookings:rows.results});}
  if(path==='/api/bookings'&&method==='POST'){
@@ -106,6 +109,7 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
   const r=await env.DB.prepare("UPDATE bookings SET status='cancelled',updated_at=?,version=version+1 WHERE id=? AND version=? AND status IN ('pending','confirmed')").bind(Date.now(),b.id,b.version).run();if(!r.meta.changes)fail('預約狀態已更新，請重新整理',409);await notify(env,b,'cancelled','您的預約已取消，時段已釋出。',origin);ctx.waitUntil(pushNotifications(env));return json({ok:true});
  }
  if(!path.startsWith('/api/admin'))fail('找不到此功能',404);if(!isAdmin(s,env))fail('此帳號沒有管理權限',403);
+ if(path==='/api/admin/calendar-subscription'&&['GET','POST','PUT','DELETE'].includes(method))return manageCalendarSubscription(req,env,s,origin);
  if(path==='/api/admin/quota'&&method==='GET'){
   if(!env.LINE_CHANNEL_ACCESS_TOKEN)return json({available:false,reason:'LINE 推播尚未設定'});
   const headers={Authorization:`Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`};
@@ -160,6 +164,6 @@ async function createBooking(req:Request,env:Env,s:Session,admin:boolean){
 async function notify(env:Env,b:Pick<Booking,'id'|'user_id'>,kind:string,message:string,origin:string){if(!b.user_id)return;await env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),b.id,b.user_id,kind,message+'\n查看預約：'+origin+'/#my').run();}
 async function scheduled(env:Env){if(!env.DB)return;await expire(env);const cfg=await settings(env);if(cfg.reminders){const now=Date.now();await env.DB.prepare("INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) SELECT lower(hex(randomblob(16))),id,user_id,'reminder','提醒您明日的預約：'||date||' '||service_name||'。現金或當下匯款，詳情請至我的預約查看。' FROM bookings WHERE status='confirmed' AND user_id IS NOT NULL AND start BETWEEN ? AND ?").bind(now+23*3600000,now+24*3600000).run();}await pushNotifications(env);await env.DB.batch([env.DB.prepare('DELETE FROM request_limits WHERE expires<?').bind(Date.now()),env.DB.prepare('DELETE FROM webhook_events WHERE created_at<?').bind(Date.now()-30*86400000)]);}
 export default {
- async fetch(req:Request,env:Env,ctx:ExecutionContext){try{let response=new URL(req.url).pathname.startsWith('/api/')?await api(req,env,ctx):await env.ASSETS.fetch(req);response=new Response(response.body,response);response.headers.set('X-Content-Type-Options','nosniff');response.headers.set('Referrer-Policy','strict-origin-when-cross-origin');response.headers.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');response.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");return response;}catch(e){const error=e as Error&{status?:number};return json({error:error.status?error.message:'系統暫時無法處理，請稍後再試'},error.status||500);}},
+ async fetch(req:Request,env:Env,ctx:ExecutionContext){try{let response=new URL(req.url).pathname.startsWith('/api/')?await api(req,env,ctx):await env.ASSETS.fetch(req);response=new Response(response.body,response);response.headers.set('X-Content-Type-Options','nosniff');if(!response.headers.has('Referrer-Policy'))response.headers.set('Referrer-Policy','strict-origin-when-cross-origin');response.headers.set('Permissions-Policy','camera=(), microphone=(), geolocation=()');response.headers.set('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'");return response;}catch(e){const error=e as Error&{status?:number};return json({error:error.status?error.message:'系統暫時無法處理，請稍後再試'},error.status||500);}},
  async scheduled(_event:ScheduledController,env:Env,ctx:ExecutionContext){ctx.waitUntil(scheduled(env));}
 };

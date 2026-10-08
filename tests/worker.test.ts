@@ -16,6 +16,94 @@ function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(ne
 async function request(f:ReturnType<typeof fixture>,path:string,user:string|null=null,method='GET',body?:unknown,origin='https://booking.test'){
  const headers:Record<string,string>={Origin:origin};if(user)headers.Cookie='linyan_session='+await sign({id:user,name:'測試使用者',expires:Date.now()+3600000},f.env.AUTH_SECRET!);if(body)headers['Content-Type']='application/json';return worker.fetch(new Request('https://booking.test/api'+path,{method,headers,body:body?JSON.stringify(body):undefined}),f.env,f.ctx);
 }
+function calendarFixture(){const f=fixture();f.db.exec(readFileSync(new URL('../migrations/0005_calendar_subscriptions.sql',import.meta.url),'utf8'));return f}
+type CalendarSubscription={enabled:boolean;httpsUrl:string;webcalUrl:string};
+async function feedRequest(f:ReturnType<typeof fixture>,url:string,method='GET'){return worker.fetch(new Request(url,{method}),f.env,f.ctx)}
+
+test('calendar management requires admin identity and same-origin writes; enabling is idempotent',async()=>{
+ const f=calendarFixture();
+ try{
+  assert.equal((await request(f,'/admin/calendar-subscription')).status,401);
+  assert.equal((await request(f,'/admin/calendar-subscription','customer')).status,403);
+  assert.equal((await request(f,'/admin/calendar-subscription','owner','POST',{},'https://evil.test')).status,403);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM calendar_subscriptions').get()?.n,0);
+  assert.deepEqual(await (await request(f,'/admin/calendar-subscription','owner')).json(),{enabled:false});
+  const enabled=await request(f,'/admin/calendar-subscription','owner','POST',{}),data=await enabled.json() as CalendarSubscription;
+  assert.ok(data.enabled);assert.equal(data.webcalUrl,data.httpsUrl.replace('https:','webcal:'));
+  assert.equal(enabled.headers.get('referrer-policy'),'no-referrer');assert.match(enabled.headers.get('cache-control')!,/no-store/);
+  assert.deepEqual(await (await request(f,'/admin/calendar-subscription','owner','POST',{})).json(),data);
+  assert.deepEqual(await (await request(f,'/admin/calendar-subscription','owner')).json(),data);
+  const token=new URL(data.httpsUrl).pathname.split('/').at(-1)!.slice(0,-4);
+  const decoded=await verify<{purpose:string;id:string}>(token,f.env.AUTH_SECRET);
+  assert.equal(decoded?.purpose,'calendar');assert.deepEqual(Object.keys(decoded!).sort(),['id','purpose']);
+  assert.notEqual(decoded?.id,'owner');assert.ok(!JSON.stringify(f.db.prepare('SELECT * FROM audit').all()).includes(token));
+  assert.equal((await feedRequest(f,data.httpsUrl)).status,200);
+  assert.equal((await feedRequest(f,data.httpsUrl.replace(token,token+'x'))).status,404);
+  const loginToken=await sign({id:'owner',name:'測試店家',expires:Date.now()+3600000},f.env.AUTH_SECRET!);
+  assert.equal((await feedRequest(f,`https://booking.test/api/calendar/${loginToken}.ics`)).status,404);
+ }finally{f.db.close()}
+});
+
+test('each administrator owns a separately revocable subscription and current authorization is checked on every fetch',async()=>{
+ const f=calendarFixture();f.env.ADMIN_LINE_USER_IDS=' owner, other ';
+ try{
+  const enable=async(user:string,method='POST')=>await (await request(f,'/admin/calendar-subscription',user,method,{})).json() as CalendarSubscription;
+  const owner=await enable('owner'),other=await enable('other');assert.notEqual(owner.httpsUrl,other.httpsUrl);
+  const newer=await enable('owner','PUT');assert.notEqual(newer.httpsUrl,owner.httpsUrl);
+  assert.equal((await feedRequest(f,owner.httpsUrl)).status,404);assert.equal((await feedRequest(f,newer.httpsUrl)).status,200);
+  assert.equal((await feedRequest(f,other.httpsUrl)).status,200);
+  assert.deepEqual(await (await request(f,'/admin/calendar-subscription','owner','DELETE',{})).json(),{enabled:false});
+  assert.equal((await feedRequest(f,newer.httpsUrl)).status,404);assert.equal((await feedRequest(f,other.httpsUrl)).status,200);
+  f.env.ADMIN_LINE_USER_IDS='owner';assert.equal((await feedRequest(f,other.httpsUrl)).status,404);
+  f.env.ADMIN_LINE_USER_IDS='owner,other';assert.equal((await feedRequest(f,other.httpsUrl)).status,200);
+  f.env.AUTH_SECRET='rotated test signing value with sufficient length';assert.equal((await feedRequest(f,other.httpsUrl)).status,404);
+ }finally{f.db.close()}
+});
+
+test('the cookie-free calendar tracks confirmed and completed bookings with stable identity, buffer and limited personal data',async()=>{
+ const f=calendarFixture();
+ try{
+  const booking=await (await request(f,'/bookings','customer','POST',{...payload(),customer:'私人測試客人',note:'不公開的備註'})).json() as {id:string};
+  const data=await (await request(f,'/admin/calendar-subscription','owner','POST',{})).json() as CalendarSubscription;
+  assert.ok(!(await (await feedRequest(f,data.httpsUrl)).text()).includes('BEGIN:VEVENT'));
+  const update=async(version:number,status:string)=>assert.equal((await request(f,`/admin/bookings/${booking.id}`,'owner','PATCH',{version,status,price:900,paid:false})).status,200);
+  await update(1,'confirmed');
+  const response=await feedRequest(f,data.httpsUrl),ics=await response.text();
+  assert.equal(response.status,200);assert.match(response.headers.get('content-type')!,/^text\/calendar/);
+  assert.equal(response.headers.get('referrer-policy'),'no-referrer');assert.match(response.headers.get('cache-control')!,/no-store/);
+  assert.equal(response.headers.get('x-robots-tag'),'noindex, nofollow, noarchive');
+  assert.ok(ics.includes('SUMMARY:私人測試客人 · 日式單根'));assert.ok(ics.includes(`UID:${booking.id}@booking.test`));
+  const b=f.db.prepare('SELECT end FROM bookings WHERE id=?').get(booking.id)!;
+  assert.ok(ics.includes('DTEND:'+new Date(Number(b.end)).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z')));
+  for(const privateValue of ['0900000000','不公開的備註','user_id','NT$900'])assert.ok(!ics.includes(privateValue));
+  assert.equal(await (await feedRequest(f,data.httpsUrl)).text(),ics);
+  const head=await feedRequest(f,data.httpsUrl,'HEAD');assert.equal(head.status,200);assert.equal(await head.text(),'');assert.match(head.headers.get('content-type')!,/^text\/calendar/);
+  await update(2,'completed');const completed=await (await feedRequest(f,data.httpsUrl)).text();
+  assert.ok(completed.includes('（已完成）'));assert.ok(completed.includes('SEQUENCE:3'));assert.ok(completed.includes(`UID:${booking.id}@booking.test`));
+  const cancelled=await (await request(f,'/bookings','customer','POST',{...payload(),date:offsetDate(payload().date,1)})).json() as {id:string};
+  assert.equal((await request(f,`/admin/bookings/${cancelled.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);
+  assert.ok((await (await feedRequest(f,data.httpsUrl)).text()).includes(`UID:${cancelled.id}`));
+  assert.equal((await request(f,`/admin/bookings/${cancelled.id}`,'owner','PATCH',{version:2,status:'cancelled',price:900,paid:false})).status,200);
+  assert.ok(!(await (await feedRequest(f,data.httpsUrl)).text()).includes(`UID:${cancelled.id}`));
+ }finally{f.db.close()}
+});
+
+test('calendar excludes rejected or distant bookings and returns an error rather than an incomplete oversized feed',async()=>{
+ const f=calendarFixture();
+ try{
+  const insert=f.db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,end,price,status,created_at,updated_at) VALUES(?,'測試客人','0900000000','single','日式單根','100 根','{}',?,?,?,900,?,1,1)");
+  const base=taipeiDay();
+  for(const [id,offset,status] of [['old',-31,'completed'],['far',181,'confirmed'],['rejected',1,'rejected'],['no-show',2,'no_show'],['expired',3,'expired']] as const){
+   const day=offsetDate(base,offset),start=taipeiMs(day,'10:00');insert.run(id,day,start,start+9000000,status);
+  }
+  const data=await (await request(f,'/admin/calendar-subscription','owner','POST',{})).json() as CalendarSubscription;
+  assert.ok(!(await (await feedRequest(f,data.httpsUrl)).text()).includes('BEGIN:VEVENT'));
+  const date=offsetDate(base,1),start=taipeiMs(date,'10:00');
+  for(let i=0;i<2001;i++)insert.run('many-'+i,date,start,start+9000000,'completed');
+  const response=await feedRequest(f,data.httpsUrl);assert.equal(response.status,503);assert.equal(response.headers.get('retry-after'),'3600');
+  assert.ok(!(await response.text()).includes('BEGIN:VCALENDAR'));
+ }finally{f.db.close()}
+});
 const payload=()=>({serviceId:'single',spec:0,addons:{lower:false,removal:'none'},date:taipeiDay(Date.now()+86400000),time:'10:00',customer:'測試客人',phone:'0900000000',note:''});
 test('LINE login uses the same canonical callback through authorization, token exchange and session return',async(t)=>{
  const f=fixture();

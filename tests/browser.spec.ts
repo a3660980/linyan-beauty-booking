@@ -190,6 +190,69 @@ test('studio notices and combinable offers are readable on mobile',async({page},
 const bookingFixture={id:'test-booking',user_id:'customer',customer:'測試客人',phone:'0900000000',note:'',service_id:'single',service_name:'日式單根',spec:'100 根',date:'2026-11-02',start:Date.parse('2026-11-02T10:00:00+08:00'),end:Date.parse('2026-11-02T12:30:00+08:00'),price:900,status:'pending',version:1,paid:0,paid_amount:null};
 const adminFixture={services:SERVICES,settings:DEFAULT_SETTINGS,bookings:[bookingFixture],exceptions:[],notifications:[],ready:{login:true,notifications:true,webhook:true,session:true}};
 
+test('calendar subscription waits for data, retries and manages a private link without flashing a disabled state',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ await page.route('**/api/admin',r=>r.fulfill({json:adminFixture}));
+ let release:()=>void=()=>{},gate=new Promise<void>(resolve=>{release=resolve}),reads=0,writes=0,enabled=false;
+ const subscription=()=>({enabled:true,httpsUrl:`https://booking.test/api/calendar/fixture-${writes}.test-signature.ics`,webcalUrl:`webcal://booking.test/api/calendar/fixture-${writes}.test-signature.ics`,createdAt:1});
+ await page.route('**/api/admin/calendar-subscription',async r=>{
+  const method=r.request().method();await gate;
+  if(method==='GET'&&[1,3].includes(++reads)){await r.fulfill({status:503,json:{error:'訂閱查詢暫時失敗'}});return}
+  if(method!=='GET'){writes++;enabled=method!=='DELETE'}
+  await r.fulfill({json:enabled?subscription():{enabled:false}});
+ });
+ await page.goto('/#admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();
+ const sync=page.locator('.calendar-sync');await sync.getByRole('button',{name:'同步到 iPhone',exact:true}).click();
+ await expect(sync.getByRole('status',{name:'載入行事曆訂閱中…'})).toBeVisible();
+ await expect(sync.getByText('尚未開啟你的行事曆訂閱。',{exact:true})).toHaveCount(0);
+ release();await expect(sync.getByRole('alert')).toContainText('訂閱查詢暫時失敗');
+ gate=new Promise<void>(resolve=>{release=resolve});await sync.getByRole('button',{name:'重新查詢',exact:true}).click();
+ await expect(sync.getByRole('status',{name:'載入行事曆訂閱中…'})).toBeVisible();release();
+ await expect(sync.getByRole('button',{name:'開啟訂閱',exact:true})).toBeVisible();
+ gate=new Promise<void>(resolve=>{release=resolve});await sync.getByRole('button',{name:'開啟訂閱',exact:true}).click();
+ await expect(sync.getByRole('status',{name:'儲存行事曆訂閱中…'})).toBeVisible();await expect(sync.locator('.calendar-sync-options')).toHaveAttribute('inert','');
+  await expect(sync.getByRole('button',{name:'收起設定',exact:true})).toBeDisabled();
+  release();await expect(sync.getByRole('status')).toContainText('訂閱已開啟');await expect(sync.getByRole('link',{name:'加入 iPhone 行事曆'})).toHaveAttribute('href',subscription().webcalUrl);
+ await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{value:{writeText:async()=>{throw new Error('clipboard unavailable')}},configurable:true}));
+ await sync.getByRole('button',{name:'複製訂閱網址'}).click();await expect(sync.getByLabel('私人訂閱網址')).toHaveValue(subscription().httpsUrl);
+ await expect(sync.getByRole('status')).toContainText('請長按下方網址');
+ page.on('dialog',dialog=>dialog.accept());
+ await sync.getByRole('button',{name:'重新產生連結'}).click();await expect(sync.getByRole('status')).toContainText('已產生新連結');
+ await expect(sync.getByRole('link',{name:'加入 iPhone 行事曆'})).toHaveAttribute('href',subscription().webcalUrl);
+ await expect(sync.getByLabel('私人訂閱網址')).toHaveCount(0);
+  await sync.getByRole('button',{name:'收起設定',exact:true}).click();await sync.getByRole('button',{name:'同步到 iPhone',exact:true}).click();
+  await expect(sync.getByRole('alert')).toContainText('訂閱查詢暫時失敗');await expect(sync.locator('.calendar-sync-options')).toHaveAttribute('inert','');
+  await expect(sync.getByText('尚未開啟你的行事曆訂閱。',{exact:true})).toHaveCount(0);
+  await sync.getByRole('button',{name:'重新查詢',exact:true}).click();await expect(sync.getByRole('alert')).toHaveCount(0);
+  await expect(sync.getByRole('link',{name:'加入 iPhone 行事曆'})).toHaveAttribute('href',subscription().webcalUrl);
+ await sync.getByRole('button',{name:'停用訂閱',exact:true}).click();await expect(sync.getByRole('status')).toContainText('已停用');
+ await expect(sync.getByRole('link',{name:'加入 iPhone 行事曆'})).toHaveCount(0);
+ await expect(sync.getByRole('button',{name:'開啟訂閱',exact:true})).toBeVisible();
+});
+
+test('calendar subscription layout and manual iPhone instructions fit small phones',async({page},testInfo)=>{
+ const httpsUrl='https://booking.test/api/calendar/'+('test-private-fixture'.repeat(9))+'.test-signature.ics';
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ await page.route('**/api/admin',r=>r.fulfill({json:adminFixture}));
+ await page.route('**/api/admin/calendar-subscription',r=>r.fulfill({json:{enabled:true,httpsUrl,webcalUrl:httpsUrl.replace('https:','webcal:'),createdAt:1}}));
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ for(const width of [320,390,430]){
+  await page.setViewportSize({width,height:844});await page.goto('/?width='+width+'#admin');
+  await page.getByRole('button',{name:'行事曆',exact:true}).click();const sync=page.locator('.calendar-sync');
+  await sync.getByRole('button',{name:'同步到 iPhone',exact:true}).click();await sync.getByRole('button',{name:'顯示訂閱網址'}).click();
+  await expect(sync.getByLabel('私人訂閱網址')).toHaveValue(httpsUrl);
+  await sync.locator('summary').click();await expect(sync.locator('details')).toContainText('加入訂閱行事曆');
+  await expect(sync.locator('details')).toContainText('非即時同步');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),String(width)).toBe(true);
+  const bounds=await sync.getByLabel('私人訂閱網址').boundingBox();expect(bounds!.x+bounds!.width).toBeLessThanOrEqual(width);
+  expect(await sync.getByLabel('私人訂閱網址').evaluate(el=>Number.parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(16);
+  if(width===390)await sync.screenshot({path:testInfo.outputPath('calendar-subscription-mobile.png')});
+ }
+ expect(errors).toEqual([]);
+});
+
 test('my bookings wait before showing empty, preserve rows during refresh and recover from failed queries',async({page})=>{
  await page.setViewportSize({width:390,height:844});
  await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));

@@ -2,12 +2,13 @@ import {useEffect,useRef,useState} from 'react';
 import {ChevronLeft,ChevronRight,Plus,X} from 'lucide-react';
 import {statusLabel,taipeiDay,windowsForDate,type DateSchedule,type Settings} from '../domain';
 import DateScheduleEditor,{type SaveDateSchedule} from './DateScheduleEditor';
+import CalendarSubscription from './CalendarSubscription';
 import type {Booking} from '../main';
 const time=(ms:number)=>new Date(ms+8*3600000).toISOString().slice(11,16);
 const offset=(date:string,n:number)=>new Date(Date.parse(date+'T12:00:00+08:00')+n*86400000+8*3600000).toISOString().slice(0,10);
 const monthOffset=(date:string,n:number)=>{const d=new Date(date.slice(0,7)+'-01T12:00:00+08:00');d.setUTCMonth(d.getUTCMonth()+n);return taipeiDay(d.getTime())};
-type Props={rows:Booking[];date:string;setDate:(d:string)=>void;onOpen:(b:Booking)=>void;settings:Settings;exceptions:DateSchedule[];onSaveSchedule:SaveDateSchedule};
-export default function CalendarPanel({rows,date,setDate,onOpen,settings,exceptions,onSaveSchedule}:Props){
+type Props={rows:Booking[];date:string;setDate:(d:string)=>void;onOpen:(b:Booking)=>void;settings:Settings;exceptions:DateSchedule[];onSaveSchedule:SaveDateSchedule;demo?:boolean};
+export default function CalendarPanel({rows,date,setDate,onOpen,settings,exceptions,onSaveSchedule,demo}:Props){
  const [view,setView]=useState('month'),[editing,setEditing]=useState<string|null>(null);
  const modal=useRef<HTMLElement>(null),opener=useRef<HTMLElement|null>(null);
  useEffect(()=>{if(!editing)return;opener.current=document.activeElement as HTMLElement;modal.current?.querySelector<HTMLInputElement>('input')?.focus();return()=>opener.current?.focus()},[!!editing]);
@@ -21,6 +22,7 @@ export default function CalendarPanel({rows,date,setDate,onOpen,settings,excepti
  const move=(n:number)=>setDate(view==='month'?monthOffset(date,n):offset(date,n*(view==='week'?7:1)));
  const event=(b:Booking)=><button className={'calendar-event '+b.status} key={b.id} onClick={()=>onOpen(b)}><strong>{b.customer} · {b.service_name}</strong><small>{time(b.start)}–{time(b.end)}　{statusLabel[b.status]}</small></button>;
  return <>
+  <CalendarSubscription demo={demo}/>
   <div className="calendar-toolbar"><div className="tabs compact">{[['day','日'],['week','週'],['month','月']].map(([id,name])=><button className={view===id?'active':''} key={id} onClick={()=>setView(id)}>{name}</button>)}</div><input aria-label="行事曆日期" type="date" value={date} onChange={e=>{if(e.target.value)setDate(e.target.value)}}/></div>
   <div className="calendar-schedule-heading"><p>點選日期設定當天開放時間，可一次新增多個區段。</p><button className="button secondary small" onClick={()=>open(date)}><Plus size={16}/>新增可預約時間</button></div>
   <div className="calendar-navigation"><button className="icon-button" aria-label="前一段日期" onClick={()=>move(-1)}><ChevronLeft size={18}/></button><strong>{date.slice(0,7)}</strong><button className="icon-button" aria-label="下一段日期" onClick={()=>move(1)}><ChevronRight size={18}/></button></div>

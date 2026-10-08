@@ -107,3 +107,27 @@ input::-webkit-datetime-edit{min-width:0;padding:0}
 .social-links svg{flex-shrink:0}
 .contact-section .social-links{margin-top:16px}
 @media(max-width:600px){.footer-navigation{grid-column:1/-1;gap:14px}.social-links{gap:6px}.social-links a{font-size:11px;padding:8px;gap:6px}}
+.calendar-sync{background:#f5efe5;border:1px solid var(--line);border-radius:8px;padding:20px 24px;margin-bottom:24px}
+.calendar-sync-heading{display:flex;justify-content:space-between;align-items:center;gap:16px}
+.calendar-sync-heading>div{display:flex;align-items:center;gap:12px}
+.calendar-sync-heading h3{font-size:18px;margin:0}
+.calendar-sync-heading p{font-size:11px;margin:2px 0 0}
+.calendar-sync-heading svg{flex-shrink:0;color:var(--rose-dark)}
+.calendar-sync-body{border-top:1px solid var(--line);margin-top:18px;padding-top:18px;min-width:0}
+.calendar-sync-body>p{font-size:12px}
+.calendar-sync-private{font-size:12px;color:var(--rose-dark)}
+.calendar-sync-actions,.calendar-sync-manage{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
+.calendar-sync-options>.text-link{font-size:11px;margin-top:10px;min-height:44px}
+.calendar-sync-options .field{min-width:0;margin-top:10px}
+.calendar-sync-url{width:100%;min-width:0;font-size:16px!important}
+.calendar-sync-manage{gap:24px;margin-top:4px}
+.calendar-sync-manage .text-link{font-size:11px;min-height:44px}
+.calendar-sync-help{font-size:12px;margin-top:18px;border-top:1px solid var(--line);padding-top:14px}
+.calendar-sync-help summary{cursor:pointer;min-height:44px;display:flex;align-items:center;gap:8px}
+.calendar-sync-help summary:before{content:'＋';color:var(--rose-dark)}
+.calendar-sync-help[open] summary:before{content:'－'}
+.calendar-sync-help li{line-height:1.9;padding-bottom:8px}
+.calendar-sync-help p{font-size:11px}
+.calendar-sync-message{color:var(--rose-dark);margin:16px 0 0}
+.calendar-sync-options[aria-busy=true]{opacity:.65}
+@media(max-width:600px){.calendar-sync{padding:18px 15px}.calendar-sync-heading{align-items:flex-start;flex-wrap:wrap;gap:12px}.calendar-sync-heading h3{font-size:17px}.calendar-sync-heading>.button{min-height:44px}.calendar-sync-actions{flex-direction:column;align-items:stretch}.calendar-sync-actions .button{min-height:44px;width:100%;font-size:12px}.calendar-sync-body>p,.calendar-sync-private,.calendar-sync-help{font-size:13px}.calendar-sync-help p{font-size:12px}.calendar-sync-help ol{padding-left:20px}}
