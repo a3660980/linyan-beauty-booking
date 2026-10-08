@@ -166,7 +166,7 @@ test('mobile schedule controls stay inside the dialog and start/end fields do no
  await page.setViewportSize({width:390,height:844});await dialog.screenshot({path:testInfo.outputPath('schedule-mobile.png')});
 });
 
-test('studio notices and combinable offers are readable on mobile with original posters',async({page},testInfo)=>{
+test('studio notices and combinable offers are readable on mobile',async({page},testInfo)=>{
  await page.setViewportSize({width:390,height:844});await page.goto('/#policies');
  await expect(page.locator('.policy-content')).toContainText('NT$500 訂金');
  await expect(page.locator('.policy-content')).toContainText('預約保留 15 分鐘');
@@ -175,8 +175,6 @@ test('studio notices and combinable offers are readable on mobile with original 
  await expect(page.locator('.care-section').first()).toContainText('費用為 NT$100');
  await expect(page.locator('.care-section').last()).toContainText('完成後 1 小時內避免碰水');
  await expect(page.locator('.care-section').last()).toContainText('2 週內回補');
- await page.getByText('查看原始美睫施作後注意事項',{exact:true}).click();
- await expect(page.locator('img[src="/assets/lashes-aftercare.jpg"]')).toBeVisible();
  await page.getByRole('button',{name:'霧眉須知',exact:true}).click();
  await expect(page.locator('.care-section').first().locator('li')).toHaveCount(6);
  await expect(page.locator('.care-section').last().locator('li')).toHaveCount(11);
