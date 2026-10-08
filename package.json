@@ -33,7 +33,7 @@
     "@vitejs/plugin-react": "^5.0.0",
     "ical.js": "^2.2.1",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
+    "typescript": "^7.0.2",
     "vite": "^7.1.0",
     "wrangler": "^4.40.0"
   }
