@@ -41,7 +41,7 @@ test('mobile calendar split schedules update customer slots and can be closed or
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.setViewportSize({width:390,height:844});
  const date=futureDay();
- await page.goto('/#demo-admin');await page.getByRole('button',{name:'服務與排班',exact:true}).click();
+ await page.goto('/#demo-admin');await page.getByRole('button',{name:'服務與排班',exact:true}).click();await page.getByRole('tab',{name:/每週固定排班/}).click();
  const remove=page.getByRole('button',{name:'刪除營業區段',exact:true});while(await remove.count())await remove.first().click();
  await page.getByRole('button',{name:'儲存服務與固定排班'}).click();
  await page.getByRole('button',{name:'行事曆',exact:true}).click();
@@ -502,4 +502,28 @@ test('my bookings let a customer decline a proposal while preserving their origi
 test('owner calendar clearly displays the proposed hold before the customer accepts',async({page})=>{
  await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));await page.route('**/api/admin/calendar-subscription',r=>r.fulfill({json:{enabled:false}}));await page.route('**/api/admin',r=>r.fulfill({json:{...adminFixture,changes:[{id:changeFixture.id,booking_id:bookingFixture.id,date:changeFixture.proposed.date,start:changeFixture.proposed.start,service_end:changeFixture.proposed.end,end:changeFixture.proposed.end+30*60000,state:'pending'}]}}));
  await page.goto('/#admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();await expect(page.locator('.calendar-event.change_pending')).toContainText('改期待同意');await expect(page.locator('.calendar-event.change_pending')).toContainText('整理至 16:10');
+});
+
+test('LINE account identity stays visible and logout removes protected navigation only after a successful response',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ let signedIn=true,failLogout=true;
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:signedIn?{id:'owner',name:'測試店家帳號',friend:true,admin:true}:null}}));
+ await page.route('**/api/logout',r=>{expect(r.request().method()).toBe('POST');if(failLogout)return r.fulfill({status:503,json:{error:'暫時無法登出，請重試'}});signedIn=false;return r.fulfill({json:{}})});
+ await page.goto('/#home');await expect(page.locator('.signed-in-identity')).toContainText('測試店家帳號');await expect(page.locator('.signed-in-identity')).toContainText('管理員');
+ await page.locator('.signed-in-bar').getByRole('button',{name:'登出',exact:true}).click();await expect(page.getByRole('status')).toContainText('暫時無法登出');await expect(page.locator('.signed-in-identity')).toContainText('測試店家帳號');
+ failLogout=false;await page.locator('.signed-in-bar').getByRole('button',{name:'登出',exact:true}).click();await expect(page.locator('.signed-in-bar')).toHaveCount(0);await expect(page.getByRole('link',{name:'後台管理',exact:true})).toHaveCount(0);await page.reload();await expect(page.locator('.signed-in-bar')).toHaveCount(0);
+});
+
+test('invitation shows the current LINE account before details load and logout preserves the invitation without claiming',async({page})=>{
+ await page.setViewportSize({width:320,height:780});
+ const token='E'.repeat(43);let user:{id:string;name:string;friend:boolean;admin:boolean}|null={id:'first',name:'第一個 LINE 帳號',friend:true,admin:false},claims=0;
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user}}));
+ await page.route('**/api/invitations/preview',async r=>{await gate;return r.fulfill({json:{booking:{customer:'測試客人',service:'日式單根',spec:'100 根',date:futureDay(),start:bookingFixture.start,end:bookingFixture.service_end,status:'confirmed'}}})});
+ await page.route('**/api/invitations/claim',r=>{claims++;return r.fulfill({json:{ok:true,status:'confirmed'}})});
+ await page.route('**/api/logout',r=>{user=null;return r.fulfill({json:{}})});
+ await page.goto('/#invite/'+token);await expect(page.locator('.invitation-account')).toContainText('第一個 LINE 帳號');await expect(page.getByRole('status',{name:'載入邀請預約中…'})).toBeVisible();
+ await page.locator('.invitation-account').getByRole('button',{name:'登出',exact:true}).click();release();await expect(page.getByRole('link',{name:'使用 LINE 登入',exact:true})).toHaveAttribute('href','/api/auth/line?returnTo='+encodeURIComponent('invite/'+token));await expect(page.locator('.invitation-account')).toHaveCount(0);await expect(page.getByRole('button',{name:'確認並綁定這筆預約'})).toHaveCount(0);expect(claims).toBe(0);expect(page.url()).toContain('#invite/'+token);
+ user={id:'second',name:'第二個 LINE 帳號',friend:true,admin:false};await page.reload();await expect(page.locator('.invitation-account')).toContainText('第二個 LINE 帳號');await expect(page.locator('.signed-in-identity')).toContainText('第二個 LINE 帳號');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);expect(claims).toBe(0);
 });
