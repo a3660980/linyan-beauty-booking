@@ -4,7 +4,7 @@ export const SERVICES:Service[] = [
  {id:'3d',name:'3D 小絨花',category:'lashes',description:'柔軟蓬鬆，為雙眼增添溫柔層次。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
  {id:'6d',name:'6D 小絨花',category:'lashes',description:'細緻綻放，打造更有存在感的睫毛。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
  {id:'yy',name:'YY 美人魚',category:'lashes',description:'交織的輕柔線條，映出迷人眼神。',specs:[{label:'150 根',price:900},{label:'200 根',price:1000},{label:'300 根',price:1100}],duration:120,active:true},
- {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。服務 4.5 小時，另保留 30 分鐘整理；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100}))),duration:270,active:true},
+ {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。服務 4.5 小時；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100}))),duration:270,active:true},
  {id:'refill',name:'兩週內補睫',category:'lashes',description:'限原款式，半價優惠需由店家核對前次服務。',specs:[{label:'原款式半價・店家確認',price:0}],duration:60,active:true},
  {id:'remove-own',name:'本店卸除不續接',category:'removal',description:'本店睫毛卸除。',specs:[{label:'單次',price:200}],duration:30,active:true},
  {id:'remove-other',name:'他店純卸除',category:'removal',description:'他店睫毛卸除。',specs:[{label:'單次',price:300}],duration:30,active:true},
@@ -50,12 +50,15 @@ export function offsetDate(date:string,days:number){return taipeiDay(taipeiMs(da
 export function bookingDates(count:number,now=Date.now()){const first=taipeiDay(now);return Array.from({length:count},(_,i)=>offsetDate(first,i))}
 export function weekDates(date:string){const first=offsetDate(date,-((weekday(date)+6)%7));return Array.from({length:7},(_,i)=>offsetDate(first,i))}
 export function overlaps(a:number,b:number,c:number,d:number){return a<d&&c<b;}
+export function cleanupMinutes(settings:Pick<Settings,'bufferMinutes'>){return Math.max(30,settings.bufferMinutes)}
+// Occupied end remains private; service_end is a snapshot independent of later settings changes.
+export function serviceEnd(b:{start:number;end:number;service_end?:number|null}){return b.service_end??Math.max(b.start,b.end-30*60000)}
 export function availableSlots(date:string,duration:number,settings:Settings,windows:[string,string][],occupied:{start:number;end:number}[],now=Date.now()){
  const day=taipeiMs(date,'00:00'); const today=taipeiMs(taipeiDay(now),'00:00');
  if(day<today||day>=today+settings.bookingDays*86400000)return [];
  const result:string[]=[];
- for(const [from,to] of windows){let t=taipeiMs(date,from);const limit=taipeiMs(date,to);for(;t+(duration+settings.bufferMinutes)*60000<=limit;t+=settings.stepMinutes*60000){
-  const end=t+(duration+settings.bufferMinutes)*60000;
+ for(const [from,to] of windows){let t=taipeiMs(date,from);const limit=taipeiMs(date,to);for(;t+(duration+cleanupMinutes(settings))*60000<=limit;t+=settings.stepMinutes*60000){
+  const end=t+(duration+cleanupMinutes(settings))*60000;
   if(t<now+settings.leadHours*3600000||occupied.some(o=>overlaps(t,end,o.start,o.end)))continue;
   result.push(new Date(t+8*3600000).toISOString().slice(11,16));
  }}return [...new Set(result)].sort();

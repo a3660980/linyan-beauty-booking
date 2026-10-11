@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {ChevronLeft,ChevronRight,Plus,X} from 'lucide-react';
-import {statusLabel,taipeiDay,windowsForDate,type DateSchedule,type Settings} from '../domain';
+import {statusLabel,serviceEnd,taipeiDay,windowsForDate,type DateSchedule,type Settings} from '../domain';
 import DateScheduleEditor,{type SaveDateSchedule} from './DateScheduleEditor';
 import CalendarSubscription from './CalendarSubscription';
 import type {Booking} from '../main';
@@ -20,7 +20,7 @@ export default function CalendarPanel({rows,date,setDate,onOpen,settings,excepti
  const selectedWindows=windowsForDate(date,settings.weekly,exceptions);
  const open=(d:string)=>{setDate(d);setEditing(d)};
  const move=(n:number)=>setDate(view==='month'?monthOffset(date,n):offset(date,n*(view==='week'?7:1)));
- const event=(b:Booking)=><button className={'calendar-event '+b.status} key={b.id} onClick={()=>onOpen(b)}><strong>{b.customer} · {b.service_name}</strong><small>{time(b.start)}–{time(b.end)}　{statusLabel[b.status]}</small></button>;
+ const event=(b:Booking)=><button className={'calendar-event '+b.status} key={b.id} onClick={()=>onOpen(b)}><strong>{b.customer} · {b.service_name}</strong><small>服務 {time(b.start)}–{time(serviceEnd(b))}　{statusLabel[b.status]}</small><small>整理至 {time(b.end)}</small></button>;
  return <>
   <CalendarSubscription demo={demo}/>
   <div className="calendar-toolbar"><div className="tabs compact">{[['day','日'],['week','週'],['month','月']].map(([id,name])=><button className={view===id?'active':''} key={id} onClick={()=>setView(id)}>{name}</button>)}</div><input aria-label="行事曆日期" type="date" value={date} onChange={e=>{if(e.target.value)setDate(e.target.value)}}/></div>

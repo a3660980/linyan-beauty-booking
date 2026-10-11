@@ -59,3 +59,9 @@ test('combined brows and lashes occupies five hours and retains lash addon rules
  assert.deepEqual(availableSlots('2026-10-08',270,cfg,[['16:30','21:30']],[],now),['16:30']);
  assert.equal(serviceDuration(service,{lower:true,removal:'own'},cfg),330);
 });
+
+test('an outdated zero-buffer setting still requires thirty minutes before the next customer',()=>{
+ const cfg={...DEFAULT_SETTINGS,leadHours:0,bufferMinutes:0};
+ assert.deepEqual(availableSlots('2026-10-08',120,cfg,[['10:00','12:00']],[],now),[]);
+ assert.deepEqual(availableSlots('2026-10-08',120,cfg,[['10:00','12:30']],[],now),['10:00']);
+});

@@ -1,11 +1,12 @@
+import {serviceEnd} from '../src/domain.ts';
 import type {Env,Session} from './security.ts';
 
-type InviteBooking={id:string;customer:string;service_name:string;spec:string;date:string;start:number;end:number;status:string;price:number;user_id:string|null;expires_at:number|null};
+type InviteBooking={id:string;customer:string;service_name:string;spec:string;date:string;start:number;end:number;service_end?:number|null;status:string;price:number;user_id:string|null;expires_at:number|null};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'}});
 function fail(message:string,status=400):never{throw Object.assign(new Error(message),{status})}
 async function digest(token:string){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('')}
 function validBooking(b:InviteBooking|null,now:number){return b&&['pending','confirmed'].includes(b.status)&&b.start>now&&(b.status!=='pending'||(b.expires_at??0)>now)}
-export function confirmationText(b:Pick<InviteBooking,'date'|'start'|'service_name'|'spec'>,price:number,address:string){return `您的預約已確認 ✨\n日期：${b.date}\n時間：${new Date(b.start+8*3600000).toISOString().slice(11,16)}\n服務：${b.service_name} ${b.spec}\n金額：NT$${price}\n付款：現金或當下匯款\n${address}`}
+export function confirmationText(b:Pick<InviteBooking,'date'|'start'|'end'|'service_end'|'service_name'|'spec'>,price:number,address:string){return `您的預約已確認 ✨\n日期：${b.date}\n時間：${new Date(b.start+8*3600000).toISOString().slice(11,16)}–${new Date(serviceEnd(b)+8*3600000).toISOString().slice(11,16)}\n服務：${b.service_name} ${b.spec}\n金額：NT$${price}\n付款：現金或當下匯款\n${address}`}
 
 export async function createInvitation(env:Env,s:Session,id:string,origin:string){
  const now=Date.now(),b=await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(id).first<InviteBooking>();
@@ -29,7 +30,7 @@ export async function useInvitation(req:Request,env:Env,s:Session,claim:boolean,
  const hash=await digest(token),now=Date.now();
  const b=await env.DB.prepare(`SELECT b.* FROM bookings b JOIN booking_invitations i ON i.booking_id=b.id WHERE i.token_hash=? AND i.expires_at>? AND i.claimed_at IS NULL AND b.user_id IS NULL`).bind(hash,now).first<InviteBooking>();
  if(!validBooking(b,now))fail('邀請連結無效或已失效，請向店家索取新的連結',404);
- if(!claim)return json({booking:{customer:b!.customer,service:b!.service_name,spec:b!.spec,date:b!.date,start:b!.start,status:b!.status}});
+ if(!claim)return json({booking:{customer:b!.customer,service:b!.service_name,spec:b!.spec,date:b!.date,start:b!.start,end:serviceEnd(b!),status:b!.status}});
  const friend=await env.DB.prepare('SELECT friend FROM users WHERE id=?').bind(s.id).first<{friend:number}>();
  if(friend?.friend!==1)fail('請先加入官方帳號好友，再重新登入確認',403);
  // D1 batch is transactional. The first update exclusively claims the booking;

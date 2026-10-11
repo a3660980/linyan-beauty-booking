@@ -12,7 +12,7 @@ class Statement {
  async all(){return {results:this.db.prepare(this.sql).all(...this.args as never[])}}
  async run(){const r=this.db.prepare(this.sql).run(...this.args as never[]);return {success:true,meta:{changes:Number(r.changes)}}}
 }
-function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));db.exec("CREATE TABLE notification_recipients(kind TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id))");const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
+function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));db.exec('ALTER TABLE bookings ADD COLUMN service_end INTEGER');db.exec("CREATE TABLE notification_recipients(kind TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id))");const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
 async function request(f:ReturnType<typeof fixture>,path:string,user:string|null=null,method='GET',body?:unknown,origin='https://booking.test'){
  const headers:Record<string,string>={Origin:origin};if(user)headers.Cookie='linyan_session='+await sign({id:user,name:'測試使用者',expires:Date.now()+3600000},f.env.AUTH_SECRET!);if(body)headers['Content-Type']='application/json';return worker.fetch(new Request('https://booking.test/api'+path,{method,headers,body:body?JSON.stringify(body):undefined}),f.env,f.ctx);
 }
@@ -384,4 +384,41 @@ test('review notifications never fall back to a different admin or trust a clien
   assert.equal((await request(f,'/bookings','customer','POST',{...payload(),reviewRecipient:'other'})).status,201);
   assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,0);
  }finally{f.db.close()}
+});
+
+test('customers see the service end while occupancy reserves at least thirty minutes, independent of later settings',async()=>{
+ const f=fixture();try{
+  const p=payload(),start=taipeiMs(p.date,p.time);
+  const created=await request(f,'/bookings','customer','POST',{...p,note:'owner-private note'});
+  assert.equal(created.status,201);const {id}=await created.json() as {id:string};
+  const db=f.db.prepare('SELECT start,end,service_end FROM bookings WHERE id=?').get(id)!;
+  assert.equal(db.service_end,start+90*60000);assert.equal(db.end,start+120*60000);
+  const bookings=async()=>((await (await request(f,'/bookings','customer')).json()) as {bookings:{end:number;service_end:number}[]}).bookings;
+  assert.equal((await bookings())[0].end,db.service_end);
+  const customerText=JSON.stringify(await (await request(f,'/bookings','customer')).json());assert.ok(!customerText.includes('owner-private note'));assert.ok(!customerText.includes('bufferMinutes'));
+  assert.equal((await request(f,'/bookings','other','POST',{...p,time:'11:30'})).status,409);
+  for(const bufferMinutes of [0,29])assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,bufferMinutes})).status,400);
+  const cfg=JSON.parse(String(f.db.prepare('SELECT data FROM settings WHERE id=1').get()!.data));cfg.bufferMinutes=45;f.db.prepare('UPDATE settings SET data=?').run(JSON.stringify(cfg));
+  assert.equal((await bookings())[0].end,db.service_end);
+  const next=await request(f,'/bookings','other','POST',{...p,time:'12:00'});assert.equal(next.status,201);
+  const later=f.db.prepare('SELECT end,service_end FROM bookings WHERE id<>?').get(id)!;assert.equal(Number(later.end)-Number(later.service_end),45*60000);
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);
+  const message=String(f.db.prepare("SELECT text FROM notifications WHERE booking_id=? AND kind='confirmed'").get(id)!.text);
+  assert.match(message,/時間：10:00–11:30/);assert.ok(!message.includes('12:00'));assert.ok(!message.includes('整理'));
+ }finally{f.db.close()}
+});
+
+test('service-end migration retains exceptional arrangements and occupied intervals without modifying status, price or version',()=>{
+ const db=new DatabaseSync(':memory:');try{
+  db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));
+  db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS}));
+  const oldDescription='一次完成眉眼的美好。服務 4.5 小時，另保留 30 分鐘整理；可選擇睫毛款式與根數。';
+  const service=SERVICES.find(s=>s.category==='combo')!;db.prepare('INSERT INTO services VALUES(?,?)').run(service.id,JSON.stringify({...service,description:oldDescription}));
+  const date=offsetDate(taipeiDay(),10),start=taipeiMs(date,'16:30'),end=taipeiMs(date,'20:30');
+  db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,end,price,status,created_at,updated_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)").run('exception','測試客人','0900000000',service.id,service.name,'測試規格','{}',date,start,end,6000,'pending',1,1,2);
+  db.exec(readFileSync(new URL('../migrations/0007_service_end.sql',import.meta.url),'utf8'));
+  const row=db.prepare('SELECT service_end,end,status,price,version FROM bookings').get()!;
+  assert.equal(row.service_end,taipeiMs(date,'20:00'));assert.equal(row.end,end);assert.equal(row.status,'pending');assert.equal(row.price,6000);assert.equal(row.version,2);
+  assert.ok(!String(db.prepare('SELECT data FROM services').get()!.data).includes('整理'));
+ }finally{db.close()}
 });
