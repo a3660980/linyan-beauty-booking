@@ -420,3 +420,35 @@ test('owner can generate a private invitation for an unbound booking in the revi
  await page.goto('/#admin');await expect(page.locator('.admin-booking')).toContainText('服務 10:00 — 12:00');await expect(page.locator('.admin-booking')).toContainText('整理至 12:30');
  await page.getByRole('button',{name:'審核預約',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('10:00–12:00');await expect(page.getByRole('dialog')).toContainText('整理至 12:30');
 });
+
+test('manual booking selects an existing customer and confirms immediately without requesting approval',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ await page.route('**/api/admin',r=>r.fulfill({json:adminFixture}));
+ const date=futureDay();await page.route('**/api/availability/dates?*',r=>r.fulfill({json:{days:[{date,slots:['10:00']}],firstAvailableDate:date,duration:120}}));
+ await page.route('**/api/admin/customers',r=>r.fulfill({json:{customers:[{id:'known-customer',customer:'舊客人',phone:'0911111111',lineBound:true}]}}));
+ let submitted:Record<string,unknown>|null=null;await page.route('**/api/admin/bookings',r=>{submitted=r.request().postDataJSON();return r.fulfill({status:201,json:{id:'manual-test',status:'confirmed',lineBound:true,notificationQueued:true}})});
+ await page.goto('/#admin');await page.getByRole('button',{name:'新增預約',exact:true}).click();await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByRole('button',{name:'10:00',exact:true}).click();await page.getByRole('button',{name:'填寫資料',exact:true}).click();
+ await page.getByRole('button',{name:'選擇現有客人',exact:true}).click();await page.getByRole('combobox',{name:'現有客人',exact:true}).selectOption('known-customer');
+ await expect(page.getByLabel('姓名 *',{exact:true})).toHaveValue('舊客人');await expect(page.getByLabel('聯絡電話 *',{exact:true})).toHaveValue('0911111111');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.getByRole('button',{name:'建立並確認預約',exact:true}).click();await expect(page.getByRole('heading',{name:'已建立並確認預約'})).toBeVisible();await expect(page.locator('.completion')).not.toContainText('預約尚未正式成立');await expect(page.locator('.completion')).toContainText('已為客戶排程 LINE 確認通知');await expect(page.getByText('給客戶的邀請訊息',{exact:true})).toHaveCount(0);
+ expect(submitted!.existingCustomerId).toBe('known-customer');expect(submitted!.customer).toBe('舊客人');
+});
+
+test('a new manual customer gets an automatically generated invitation message with a copy action',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ await page.route('**/api/admin',r=>r.fulfill({json:adminFixture}));
+ const date=futureDay();await page.route('**/api/availability/dates?*',r=>r.fulfill({json:{days:[{date,slots:['10:00']}],firstAvailableDate:date,duration:120}}));
+ await page.route('**/api/admin/customers',r=>r.fulfill({json:{customers:[]}}));
+ await page.route('**/api/admin/bookings',r=>r.fulfill({status:201,json:{id:'new-manual',status:'confirmed',lineBound:false}}));
+ let invitations=0;await page.route('**/api/admin/bookings/new-manual/invitation',r=>{invitations++;return r.fulfill({json:{url:'https://booking.test/#invite/'+'C'.repeat(43),expiresAt:Date.now()+3600000}})});
+ await page.addInitScript(()=>{Object.defineProperty(navigator,'clipboard',{value:{writeText:async(text:string)=>{(window as unknown as {copied:string}).copied=text}}})});
+ await page.goto('/#admin');await page.getByRole('button',{name:'新增預約',exact:true}).click();await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByRole('button',{name:'10:00',exact:true}).click();await page.getByRole('button',{name:'填寫資料',exact:true}).click();await page.getByLabel('姓名 *',{exact:true}).fill('新客人');await page.getByLabel('聯絡電話 *',{exact:true}).fill('0922222222');await page.getByRole('button',{name:'建立並確認預約',exact:true}).click();
+ await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('新客人 您好');await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('10:00–12:00');await expect(page.getByLabel('給客戶的邀請訊息')).not.toContainText('整理');
+ await page.getByRole('button',{name:'複製邀請訊息與連結',exact:true}).click();const copied=await page.evaluate(()=>(window as unknown as {copied:string}).copied);expect(copied).toContain('新客人 您好');expect(copied).toContain('https://booking.test/#invite/');expect(invitations).toBe(1);
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});

@@ -283,7 +283,8 @@ function inviteFixture(){const f=fixture();f.db.exec(readFileSync(new URL('../mi
 async function manualInvite(f:ReturnType<typeof fixture>,confirmed=false){
  const response=await request(f,'/admin/bookings','owner','POST',payload());assert.equal(response.status,201);
  const {id}=await response.json() as {id:string};
- if(confirmed)assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);
+ // Existing pending manual bookings still support invitations after the new direct-confirm flow.
+ if(!confirmed)f.db.prepare("UPDATE bookings SET status='pending',expires_at=? WHERE id=?").run(Date.now()+86400000,id);
  const invite=await request(f,'/admin/bookings/'+id+'/invitation','owner','POST',{});assert.equal(invite.status,200);
  const {url}=await invite.json() as {url:string};return {id,token:new URL(url).hash.slice('#invite/'.length)};
 }
@@ -421,4 +422,32 @@ test('service-end migration retains exceptional arrangements and occupied interv
   assert.equal(row.service_end,taipeiMs(date,'20:00'));assert.equal(row.end,end);assert.equal(row.status,'pending');assert.equal(row.price,6000);assert.equal(row.version,2);
   assert.ok(!String(db.prepare('SELECT data FROM services').get()!.data).includes('整理'));
  }finally{db.close()}
+});
+
+test('manual creation is confirmed immediately, preserves cleanup and reuses only an explicitly selected customer LINE identity',async()=>{
+ const f=fixture();try{
+  assert.equal((await request(f,'/admin/customers','customer')).status,403);
+  assert.equal((await request(f,'/admin/customers')).status,401);
+  const first=await (await request(f,'/bookings','customer','POST',payload())).json() as {id:string};
+  const customers=await (await request(f,'/admin/customers','owner')).json() as {customers:{id:string;lineBound:boolean}[]};
+  assert.equal(customers.customers.length,1);assert.equal(customers.customers[0].id,first.id);assert.equal(customers.customers[0].lineBound,true);
+  const manual=await request(f,'/admin/bookings','owner','POST',{...payload(),time:'12:00',existingCustomerId:first.id,user_id:'other',manualPrice:850});
+  assert.equal(manual.status,201);const created=await manual.json() as {id:string;status:string;lineBound:boolean;notificationQueued:boolean};
+  assert.equal(created.status,'confirmed');assert.equal(created.lineBound,true);assert.equal(created.notificationQueued,true);
+  const b=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(created.id)!;
+  assert.equal(b.user_id,'customer');assert.equal(b.price,850);assert.equal(b.price_confirmed,1);assert.equal(b.expires_at,null);assert.equal(Number(b.end)-Number(b.service_end),30*60000);
+  const notice=f.db.prepare('SELECT * FROM notifications WHERE booking_id=?').get(created.id)!;assert.equal(notice.kind,'confirmed');assert.equal(notice.user_id,'customer');assert.match(String(notice.text),/12:00–13:30/);assert.ok(!String(notice.text).includes('整理'));
+  const fresh=await (await request(f,'/admin/bookings','owner','POST',{...payload(),time:'14:00',user_id:'customer'})).json() as {id:string;status:string;lineBound:boolean};
+  assert.equal(fresh.status,'confirmed');assert.equal(fresh.lineBound,false);assert.equal(f.db.prepare('SELECT user_id FROM bookings WHERE id=?').get(fresh.id)!.user_id,null);assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE booking_id=?').get(fresh.id)!.n,0);
+  assert.equal((await request(f,'/admin/bookings','owner','POST',{...payload(),time:'16:00',existingCustomerId:'unknown'})).status,404);
+ }finally{f.db.close()}
+});
+
+test('directly confirmed manual bookings require eligible refill/touchup records and customer requests cannot bypass review',async()=>{
+ const f=fixture();try{
+  assert.equal((await request(f,'/admin/bookings','owner','POST',{...payload(),serviceId:'refill',previousId:'missing',manualPrice:500})).status,409);
+  assert.equal((await request(f,'/admin/bookings','owner','POST',{...payload(),serviceId:'touchup',previousId:'missing'})).status,409);
+  const response=await request(f,'/bookings','customer','POST',{...payload(),status:'confirmed',manualPrice:1,existingCustomerId:'owner'});assert.equal(response.status,201);
+  const b=f.db.prepare('SELECT status,price,user_id FROM bookings').get()!;assert.equal(b.status,'pending');assert.equal(b.price,900);assert.equal(b.user_id,'customer');
+ }finally{f.db.close()}
 });

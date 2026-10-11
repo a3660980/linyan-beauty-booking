@@ -113,6 +113,12 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
   const r=await env.DB.prepare("UPDATE bookings SET status='cancelled',updated_at=?,version=version+1 WHERE id=? AND version=? AND status IN ('pending','confirmed')").bind(Date.now(),b.id,b.version).run();if(!r.meta.changes)fail('預約狀態已更新，請重新整理',409);await notify(env,b,'cancelled','您的預約已取消，時段已釋出。',origin);ctx.waitUntil(pushNotifications(env));return json({ok:true});
  }
  if(!path.startsWith('/api/admin'))fail('找不到此功能',404);if(!isAdmin(s,env))fail('此帳號沒有管理權限',403);
+ if(path==='/api/admin/customers'&&method==='GET'){
+  const rows=await env.DB.prepare(`SELECT id,customer,phone,user_id FROM (
+   SELECT id,customer,phone,user_id,ROW_NUMBER() OVER(PARTITION BY COALESCE(user_id,'phone:'||REPLACE(phone,' ','')) ORDER BY created_at DESC,rowid DESC) AS rank FROM bookings
+  ) WHERE rank=1 ORDER BY customer LIMIT 1000`).all<{id:string;customer:string;phone:string;user_id:string|null}>();
+  return json({customers:rows.results.map(b=>({id:b.id,customer:b.customer,phone:b.phone,lineBound:!!b.user_id}))});
+ }
  if(path==='/api/admin/calendar-subscription'&&['GET','POST','PUT','DELETE'].includes(method))return manageCalendarSubscription(req,env,s,origin);
  if(path==='/api/admin/quota'&&method==='GET'){
   if(!env.LINE_CHANNEL_ACCESS_TOKEN)return json({available:false,reason:'LINE 推播尚未設定'});
@@ -159,19 +165,34 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
  }fail('找不到此功能',404);
 }
 async function createBooking(req:Request,env:Env,s:Session,admin:boolean,ctx:ExecutionContext,origin:string){
- const d=await body(req);const cfg=await settings(env);const item=(await services(env)).find(x=>x.id===d.serviceId&&x.active);if(!item)fail('此服務目前不開放',404);const spec=integer(d.spec,0,item.specs.length-1),a=addonInput(d.addons);const price=priceFor(item,spec,a),duration=serviceDuration(item,a,cfg);if(!duration)fail('店家尚未設定此服務時間',409);
+ const d=await body(req);const cfg=await settings(env);const item=(await services(env)).find(x=>x.id===d.serviceId&&x.active);if(!item)fail('此服務目前不開放',404);const spec=integer(d.spec,0,item.specs.length-1),a=addonInput(d.addons);const basePrice=priceFor(item,spec,a),price=admin&&d.manualPrice!==undefined?integer(d.manualPrice,0,100000):basePrice,duration=serviceDuration(item,a,cfg);if(!duration)fail('店家尚未設定此服務時間',409);
  const date=text(d.date,10,true),time=text(d.time,5,true),start=taipeiMs(date,time),service_end=start+duration*60000,end=service_end+cleanupMinutes(cfg)*60000;await expire(env);const slots=availableSlots(date,duration,cfg,await windows(env,date,cfg),await occupied(env,date));if(!slots.includes(time))fail('此時段已無法預約，請重新選擇',409);
  const customer=text(d.customer,80,true),phone=text(d.phone,30,true);if(!/^[+\d\s()-]{8,25}$/.test(phone))fail('請輸入有效聯絡電話');const note=text(d.note||'',1000),previous=text(d.previousId||'',80),companion=text(d.companion||'',80);if(['refill','touchup'].includes(item.id)&&!previous)fail('請填寫前次預約編號供店家核對');if(item.id==='brows'&&spec===1&&!companion)fail('請填寫同行者姓名');
+ let bookingUser=admin?null:s.id;
+ if(admin&&d.existingCustomerId){
+  const existing=await env.DB.prepare('SELECT user_id FROM bookings WHERE id=?').bind(text(d.existingCustomerId,80,true)).first<{user_id:string|null}>();
+  if(!existing)fail('找不到此客人，請重新選擇',404);bookingUser=existing.user_id;
+ }
+ if(admin&&['refill','touchup'].includes(item.id)){
+  const prev=await env.DB.prepare("SELECT * FROM bookings WHERE id=? AND status='completed'").bind(previous).first<Booking>();
+  const eligible=prev&&(item.id==='refill'?start>prev.start&&start-prev.start<=14*86400000:withinCalendarMonths(prev.start,start,3));
+  if(!prev||!eligible||(bookingUser?prev.user_id!==bookingUser:prev.phone!==phone)||(item.id==='touchup'&&!['brows','combo-brows-lashes'].includes(prev.service_id))||(item.id==='refill'&&!['single','3d','6d','yy','combo-brows-lashes'].includes(prev.service_id)))fail('優惠資格不符，請核對前次已完成服務',409);
+  if(item.id==='refill'&&price===0)fail('請填寫核對後的原款式半價金額',409);
+  if(item.id==='touchup'&&price!==0)fail('符合三個月內補色資格時應為免費',409);
+ }
+ const status=admin?'confirmed':'pending';
+ const confirmedNotice=admin&&bookingUser?confirmationText({date,start,end,service_end,service_name:item.name,spec:item.specs[spec].label},price,cfg.address)+'\n查看預約：'+origin+'/#my':null;
  const recipient=!admin?await reviewRecipient(env):null;
  const id=crypto.randomUUID(),now=Date.now();let group:string|null=null;if(item.id==='brows'&&spec===1){group=crypto.randomUUID();if(d.groupCode){const code=text(d.groupCode,80,true);const existing=await env.DB.prepare("SELECT id FROM bookings WHERE group_code=? AND service_id='brows' AND status IN ('pending','confirmed')").bind(code).all();if(existing.results.length!==1)fail('同行預約識別碼無效或已額滿');group=code;}}
- try{const insert=env.DB.prepare('INSERT INTO bookings(id,user_id,customer,phone,note,service_id,service_name,spec,addons,date,start,end,service_end,price,status,expires_at,created_at,updated_at,previous_id,group_code,companion) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,admin?null:s.id,customer,phone,note,item.id,item.name,item.specs[spec].label,JSON.stringify(a),date,start,end,service_end,price,'pending',now+cfg.approvalHours*3600000,now,now,previous||null,group,companion);
+ try{const insert=env.DB.prepare('INSERT INTO bookings(id,user_id,customer,phone,note,service_id,service_name,spec,addons,date,start,end,service_end,price,price_confirmed,status,expires_at,created_at,updated_at,previous_id,group_code,companion) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id,bookingUser,customer,phone,note,item.id,item.name,item.specs[spec].label,JSON.stringify(a),date,start,end,service_end,price,admin?1:0,status,admin?null:now+cfg.approvalHours*3600000,now,now,previous||null,group,companion);
  const statements=[insert];
+ if(confirmedNotice)statements.push(env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),id,bookingUser,'confirmed',confirmedNotice));
  if(recipient)statements.push(env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),id,recipient,'review_requested',`有新的預約申請，請審核 ✨\n客人：${customer}\n日期：${date}\n時間：${time}\n服務：${item.name} ${item.specs[spec].label}\n預估金額：NT$${price}\n目前等待店家確認，預約尚未正式成立。\n審核預約：${origin}/#admin`));
  await env.DB.batch(statements);
  }catch(e){if(String(e).includes('GROUP_FULL'))fail('此同行優惠已額滿',409);if(String(e).includes('SLOT_TAKEN'))fail('此時段剛被其他客人預約，請選擇其他時段',409);throw e;}
  if(admin)await audit(env,s,'manual_booking',id);
- if(recipient)ctx.waitUntil(pushNotifications(env));
- return json({ok:true,id,groupCode:group,status:'pending'},201);
+ if(recipient||confirmedNotice)ctx.waitUntil(pushNotifications(env));
+ return json({ok:true,id,groupCode:group,status,lineBound:!!bookingUser,notificationQueued:!!confirmedNotice},201);
 }
 async function notify(env:Env,b:Pick<Booking,'id'|'user_id'>,kind:string,message:string,origin:string){if(!b.user_id)return;await env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),b.id,b.user_id,kind,message+'\n查看預約：'+origin+'/#my').run();}
 async function scheduled(env:Env){if(!env.DB)return;await expire(env);const cfg=await settings(env);if(cfg.reminders){const now=Date.now();await env.DB.prepare("INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) SELECT lower(hex(randomblob(16))),id,user_id,'reminder','提醒您明日的預約：'||date||' '||service_name||'。現金或當下匯款，詳情請至我的預約查看。' FROM bookings WHERE status='confirmed' AND user_id IS NOT NULL AND start BETWEEN ? AND ?").bind(now+23*3600000,now+24*3600000).run();}await pushNotifications(env);await env.DB.batch([env.DB.prepare('DELETE FROM request_limits WHERE expires<?').bind(Date.now()),env.DB.prepare('DELETE FROM webhook_events WHERE created_at<?').bind(Date.now()-30*86400000)]);}
