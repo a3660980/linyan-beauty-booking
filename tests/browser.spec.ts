@@ -452,3 +452,11 @@ test('a new manual customer gets an automatically generated invitation message w
  await page.getByRole('button',{name:'複製邀請訊息與連結',exact:true}).click();const copied=await page.evaluate(()=>(window as unknown as {copied:string}).copied);expect(copied).toContain('新客人 您好');expect(copied).toContain('https://booking.test/#invite/');expect(invitations).toBe(1);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
+
+test('binding a confirmed manual invitation tells the customer the booking is already confirmed',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
+ await page.route('**/api/invitations/preview',r=>r.fulfill({json:{booking:{customer:'測試客人',service:'日式單根',spec:'100 根',date:futureDay(),start:bookingFixture.start,end:bookingFixture.service_end,status:'confirmed'}}}));
+ await page.route('**/api/invitations/claim',r=>r.fulfill({json:{ok:true,status:'confirmed'}}));
+ await page.goto('/#invite/'+'D'.repeat(43));await page.getByRole('button',{name:'確認並綁定這筆預約',exact:true}).click();await expect(page.getByRole('heading',{name:'已綁定預約通知'})).toBeVisible();await expect(page.locator('.invitation-page')).toContainText('預約已正式成立');await expect(page.locator('.invitation-page')).not.toContainText('仍需等候店家確認');
+});
