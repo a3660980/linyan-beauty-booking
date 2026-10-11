@@ -1,12 +1,14 @@
+import {confirmationText,changeRequestText} from './bookingMessages.ts';
+export {confirmationText} from './bookingMessages.ts';
 import {serviceEnd} from '../src/domain.ts';
 import type {Env,Session} from './security.ts';
 
-type InviteBooking={id:string;customer:string;service_name:string;spec:string;date:string;start:number;end:number;service_end?:number|null;status:string;price:number;user_id:string|null;expires_at:number|null};
+type InviteBooking={id:string;customer:string;service_name:string;spec:string;date:string;start:number;end:number;service_end?:number|null;status:string;price:number;user_id:string|null;expires_at:number|null;version:number};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Robots-Tag':'noindex, nofollow'}});
 function fail(message:string,status=400):never{throw Object.assign(new Error(message),{status})}
 async function digest(token:string){const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(token));return Array.from(new Uint8Array(bytes),b=>b.toString(16).padStart(2,'0')).join('')}
 function validBooking(b:InviteBooking|null,now:number){return b&&['pending','confirmed'].includes(b.status)&&b.start>now&&(b.status!=='pending'||(b.expires_at??0)>now)}
-export function confirmationText(b:Pick<InviteBooking,'date'|'start'|'end'|'service_end'|'service_name'|'spec'>,price:number,address:string){return `您的預約已確認 ✨\n日期：${b.date}\n時間：${new Date(b.start+8*3600000).toISOString().slice(11,16)}–${new Date(serviceEnd(b)+8*3600000).toISOString().slice(11,16)}\n服務：${b.service_name} ${b.spec}\n金額：NT$${price}\n付款：現金或當下匯款\n${address}`}
+
 
 export async function createInvitation(env:Env,s:Session,id:string,origin:string){
  const now=Date.now(),b=await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(id).first<InviteBooking>();
@@ -35,9 +37,11 @@ export async function useInvitation(req:Request,env:Env,s:Session,claim:boolean,
  if(friend?.friend!==1)fail('請先加入官方帳號好友，再重新登入確認',403);
  // D1 batch is transactional. The first update exclusively claims the booking;
  // the second consumes the token only when that same booking was updated by this request.
+ const held=await env.DB.prepare("SELECT id FROM booking_changes WHERE booking_id=? AND state='pending' AND expires_at>?").bind(b!.id,now).first<{id:string}>();
  const result=await env.DB.batch([
   env.DB.prepare(`UPDATE bookings SET user_id=?,updated_at=?,version=version+1 WHERE id=? AND user_id IS NULL AND start>? AND (status='confirmed' OR (status='pending' AND expires_at>?)) AND EXISTS(SELECT 1 FROM booking_invitations WHERE booking_id=bookings.id AND token_hash=? AND expires_at>? AND claimed_at IS NULL)`).bind(s.id,now,b!.id,now,now,hash,now),
   env.DB.prepare(`UPDATE booking_invitations SET claimed_by=?,claimed_at=? WHERE token_hash=? AND claimed_at IS NULL AND changes()=1 AND EXISTS(SELECT 1 FROM bookings WHERE id=booking_id AND user_id=?)`).bind(s.id,now,hash,s.id)
+ ,...(held?[env.DB.prepare("UPDATE booking_changes SET state='pending',responded_at=NULL,base_version=(SELECT version FROM bookings WHERE id=booking_id) WHERE id=? AND state='obsolete' AND base_version=(SELECT version-1 FROM bookings WHERE id=booking_id) AND expires_at>? AND EXISTS(SELECT 1 FROM booking_invitations WHERE booking_id=booking_changes.booking_id AND token_hash=? AND claimed_by=? AND claimed_at=?)").bind(held.id,now,hash,s.id,now)]:[])
  ]);
  if(!result[0].meta.changes||!result[1].meta.changes)fail('此邀請已使用或預約已更新，請聯絡店家',409);
  await env.DB.prepare('INSERT INTO audit(id,actor,action,booking_id,created_at) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),s.id,'claim_booking_invitation',b!.id,now).run();
@@ -46,6 +50,10 @@ export async function useInvitation(req:Request,env:Env,s:Session,claim:boolean,
   const cfg=await env.DB.prepare('SELECT data FROM settings WHERE id=1').first<{data:string}>();
   const address=cfg?(JSON.parse(cfg.data) as {address?:string}).address||'':'';
   await env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),current.id,s.id,'confirmed',confirmationText(current,current.price,address)+'\n查看預約：'+origin+'/#my').run();
+ }
+ if(current){
+  const change=await env.DB.prepare("SELECT * FROM booking_changes WHERE booking_id=? AND state='pending' AND base_version=? AND expires_at>?").bind(current.id,current.version,now).first<import('./rescheduling.ts').BookingChange>();
+  if(change)await env.DB.prepare('INSERT OR IGNORE INTO notifications(id,booking_id,user_id,kind,text) VALUES(?,?,?,?,?)').bind(crypto.randomUUID(),current.id,s.id,'reschedule_requested:'+change.id,changeRequestText(change,current.service_name+' '+current.spec,origin)).run();
  }
  return json({ok:true,status:current?.status});
 }

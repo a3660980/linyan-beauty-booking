@@ -2,6 +2,7 @@ import {useEffect,useRef,useState} from 'react';
 import {ArrowRight,CalendarDays,MessageCircle} from 'lucide-react';
 import {api} from '../api';
 import {money,statusLabel,serviceEnd} from '../domain';
+import {ChangeDecision} from './ReschedulePage';
 import {DataError,DataLoading} from './DataState';
 import type {Booking,SharedProps} from '../main';
 const timeOf=(ms:number)=>new Date(ms+8*3600000).toISOString().slice(11,16);
@@ -39,7 +40,7 @@ export default function MyBookings(p:SharedProps){
     {loading&&<DataLoading compact label="更新預約紀錄中…"/>}
     {busy&&!loading&&<DataLoading compact label="取消預約中…"/>}
     <div className="my-list" aria-busy={loading||busy}>
-     {rows.length?rows.map(b=><article className="reservation" key={b.id}><div className="reservation-date"><strong>{b.date.slice(8)}</strong><small>{b.date.slice(5,7)} 月</small></div><div className="reservation-info"><span className={'badge '+b.status}>{statusLabel[b.status]}</span><h3>{b.service_name}・{b.spec}</h3><p>{b.date}　{timeOf(b.start)}–{timeOf(serviceEnd(b))}　·　到店付款</p><small>預約編號：{b.id}</small>{b.group_code&&<small>同行預約識別碼：{b.group_code}</small>}</div><div className="reservation-actions"><strong>NT$ {money(b.price)}</strong>{['pending','confirmed'].includes(b.status)&&<button disabled={busy||loading} className="text-link" onClick={()=>void cancel(b)}>取消預約</button>}</div></article>):<div className="empty-state"><CalendarDays size={34}/><h3>還沒有預約紀錄</h3><a href={p.demo?'#demo-booking':'#booking'} className="button">開始預約 <ArrowRight size={16}/></a></div>}
+     {rows.length?rows.map(b=><article className="reservation" key={b.id}><div className="reservation-date"><strong>{b.date.slice(8)}</strong><small>{b.date.slice(5,7)} 月</small></div><div className="reservation-info"><span className={'badge '+b.status}>{statusLabel[b.status]}</span><h3>{b.service_name}・{b.spec}</h3><p>{b.date}　{timeOf(b.start)}–{timeOf(serviceEnd(b))}　·　到店付款</p><small>預約編號：{b.id}</small>{b.group_code&&<small>同行預約識別碼：{b.group_code}</small>}</div><div className="reservation-actions"><strong>NT$ {money(b.price)}</strong>{['pending','confirmed'].includes(b.status)&&<button disabled={busy||loading} className="text-link" onClick={()=>void cancel(b)}>取消預約</button>}</div>{b.reschedule&&<ChangeDecision change={b.reschedule} onDone={async state=>{p.notify(state==='accepted'?'改期已成功':'已告知店家維持原時段');await load()}}/>}</article>):<div className="empty-state"><CalendarDays size={34}/><h3>還沒有預約紀錄</h3><a href={p.demo?'#demo-booking':'#booking'} className="button">開始預約 <ArrowRight size={16}/></a></div>}
     </div>
    </>}
   </>}

@@ -14,4 +14,4 @@ export function cookie(name:string,value:string,seconds:number,secure=true){retu
 export async function validLineSignature(body:string,signature:string|null,secret:string|undefined){if(!signature||!secret)return false;try{return await crypto.subtle.verify('HMAC',await key(secret),Uint8Array.from(atob(signature),c=>c.charCodeAt(0)),enc.encode(body));}catch{return false;}}
 export function sameOrigin(req:Request,origin:string){return req.headers.get('origin')===origin;}
 
-export function safeReturnTo(value:string|null|undefined){return value&&(['admin','my'].includes(value)||/^invite\/[A-Za-z0-9_-]{43}$/.test(value))?value:'booking';}
+export function safeReturnTo(value:string|null|undefined){return value&&(['admin','my'].includes(value)||/^invite\/[A-Za-z0-9_-]{43}$/.test(value)||/^reschedule\/[0-9a-f-]{36}$/.test(value))?value:'booking';}

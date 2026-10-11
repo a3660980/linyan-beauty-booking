@@ -31,7 +31,7 @@ test('mobile pages have no horizontal overflow and the menu works',async({page})
 });
 test('unknown production service time blocks advancing to booking slots',async({page})=>{
  await page.route('**/api/me',r=>r.fulfill({status:200,contentType:'application/json',body:'{"user":null}'}));
- await page.route('**/api/public',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({services:SERVICES.map(s=>({...s,duration:null})),settings:DEFAULT_SETTINGS,lineReady:false,lineUrl:''})}));
+ await page.route('**/api/public',r=>r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({services:SERVICES.map(s=>({...s,duration:null,specs:s.specs.map(spec=>({...spec,duration:null}))})),settings:DEFAULT_SETTINGS,lineReady:false,lineUrl:''})}));
  await page.goto('/#booking');await expect(page.locator('.setup-banner')).toContainText('線上預約設定中');await page.getByRole('button',{name:'選擇日期',exact:true}).click();
  await expect(page.getByRole('alert')).toContainText('尚未設定此服務時間');
  await expect(page.getByRole('heading',{name:'想為自己預約什麼？'})).toBeVisible();
@@ -59,7 +59,7 @@ test('mobile calendar split schedules update customer slots and can be closed or
  await expect(cell).toContainText('10:00–12:00');await expect(cell).toContainText('15:00–18:00');
  const customerSlots=async()=>{await page.evaluate(()=>location.hash='demo-booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByLabel('預約日期',{exact:true}).fill(date)};
  const edit=async()=>{await page.evaluate(()=>location.hash='demo-admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();await page.getByLabel('行事曆日期').fill(date);await page.getByRole('button',{name:`設定 ${date} 的可預約時間`}).click()};
- await customerSlots();await expect(page.locator('.time-grid button')).toHaveText(['15:00','15:30']);
+ await customerSlots();await expect(page.locator('.time-grid button')).toHaveText(['10:00','15:00','15:15','15:30','15:45','16:00']);
  await edit();await dialog.getByRole('checkbox',{name:'全天休息'}).check();await dialog.getByRole('button',{name:'儲存當日排班'}).click();
  await expect(cell).toContainText('全天休息');await customerSlots();await expect(page.getByRole('heading',{name:'目前沒有可預約日期'})).toBeVisible();
  await edit();await dialog.getByRole('button',{name:'恢復固定排班'}).click();await expect(cell).toContainText('未開放');
@@ -448,7 +448,7 @@ test('a new manual customer gets an automatically generated invitation message w
  let invitations=0;await page.route('**/api/admin/bookings/new-manual/invitation',r=>{invitations++;return r.fulfill({json:{url:'https://booking.test/#invite/'+'C'.repeat(43),expiresAt:Date.now()+3600000}})});
  await page.addInitScript(()=>{Object.defineProperty(navigator,'clipboard',{value:{writeText:async(text:string)=>{(window as unknown as {copied:string}).copied=text}}})});
  await page.goto('/#admin');await page.getByRole('button',{name:'新增預約',exact:true}).click();await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByRole('button',{name:'10:00',exact:true}).click();await page.getByRole('button',{name:'填寫資料',exact:true}).click();await page.getByLabel('姓名 *',{exact:true}).fill('新客人');await page.getByLabel('聯絡電話 *',{exact:true}).fill('0922222222');await page.getByRole('button',{name:'建立並確認預約',exact:true}).click();
- await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('新客人 您好');await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('10:00–12:00');await expect(page.getByLabel('給客戶的邀請訊息')).not.toContainText('整理');
+ await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('新客人 您好');await expect(page.getByLabel('給客戶的邀請訊息')).toContainText('10:00–11:20');await expect(page.getByLabel('給客戶的邀請訊息')).not.toContainText('整理');
  await page.getByRole('button',{name:'複製邀請訊息與連結',exact:true}).click();const copied=await page.evaluate(()=>(window as unknown as {copied:string}).copied);expect(copied).toContain('新客人 您好');expect(copied).toContain('https://booking.test/#invite/');expect(invitations).toBe(1);
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });
@@ -459,4 +459,47 @@ test('binding a confirmed manual invitation tells the customer the booking is al
  await page.route('**/api/invitations/preview',r=>r.fulfill({json:{booking:{customer:'測試客人',service:'日式單根',spec:'100 根',date:futureDay(),start:bookingFixture.start,end:bookingFixture.service_end,status:'confirmed'}}}));
  await page.route('**/api/invitations/claim',r=>r.fulfill({json:{ok:true,status:'confirmed'}}));
  await page.goto('/#invite/'+'D'.repeat(43));await page.getByRole('button',{name:'確認並綁定這筆預約',exact:true}).click();await expect(page.getByRole('heading',{name:'已綁定預約通知'})).toBeVisible();await expect(page.locator('.invitation-page')).toContainText('預約已正式成立');await expect(page.locator('.invitation-page')).not.toContainText('仍需等候店家確認');
+});
+
+const changeFixture={id:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',state:'pending',reason:'調整當日排班',price:900,expiresAt:Date.now()+12*3600000,old:{date:bookingFixture.date,start:bookingFixture.start,end:bookingFixture.service_end},proposed:{date:futureDay(),start:Date.parse(futureDay()+'T14:00:00+08:00'),end:Date.parse(futureDay()+'T15:40:00+08:00')}};
+
+test('root-specific service minutes change the availability query and preserve the thirty-minute private buffer',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
+ const specs:string[]=[];await page.route('**/api/availability/dates?*',r=>{const spec=new URL(r.request().url()).searchParams.get('spec')!;specs.push(spec);const date=futureDay();return r.fulfill({json:{days:[{date,slots:spec==='2'?['14:00']:['10:00']}],firstAvailableDate:date,duration:spec==='2'?100:90}})});
+ await page.goto('/#booking');await expect(page.locator('.booking-summary')).toContainText('服務 80 分鐘');await page.getByRole('radio').last().check();await expect(page.locator('.booking-summary')).toContainText('服務 100 分鐘');await expect(page.locator('.booking-summary')).not.toContainText('整理');
+ await page.getByRole('button',{name:'選擇日期',exact:true}).click();await expect(page.getByRole('button',{name:'14:00',exact:true})).toBeVisible();expect(specs.at(-1)).toBe('2');
+ await page.getByRole('button',{name:'上一步',exact:true}).click();await page.getByRole('radio').nth(1).check();await page.getByRole('button',{name:'選擇日期',exact:true}).click();await expect(page.getByRole('button',{name:'10:00',exact:true})).toBeVisible();expect(specs.at(-1)).toBe('1');
+});
+
+test('owner proposes and withdraws a move in a mobile dialog with clear service and private cleanup times',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ let pending=false;await page.route('**/api/admin',r=>r.fulfill({json:{...adminFixture,changes:pending?[{id:changeFixture.id,booking_id:bookingFixture.id,date:changeFixture.proposed.date,start:changeFixture.proposed.start,service_end:changeFixture.proposed.end,end:changeFixture.proposed.end+30*60000,state:'pending'}]:[]}}));
+ let submitted:Record<string,unknown>|null=null;await page.route('**/api/admin/bookings/test-booking/changes',r=>{if(r.request().method()==='POST'){submitted=r.request().postDataJSON();pending=true;return r.fulfill({status:201,json:{change:changeFixture,lineBound:true,notificationQueued:true}})}return r.fulfill({json:{changes:[]}})});
+ await page.route('**/api/admin/changes/*/withdraw',r=>{pending=false;return r.fulfill({json:{ok:true}})});
+ await page.goto('/#admin');await page.getByRole('button',{name:'審核預約',exact:true}).click();await page.getByRole('button',{name:'調整日期／服務時間',exact:true}).click();await page.getByLabel('改期日期',{exact:true}).fill(changeFixture.proposed.date);await page.getByLabel('改期開始時間',{exact:true}).fill('14:00');await page.getByLabel('服務時間（分鐘）',{exact:true}).fill('100');await page.getByLabel('改期原因',{exact:true}).fill('調整當日排班');
+ await expect(page.locator('.reschedule-fields')).toContainText('客戶服務至 15:40，店家整理至 16:10');
+ expect(await page.locator('.reschedule-fields').evaluate(el=>[...el.querySelectorAll('input,textarea')].every(input=>{const r=input.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth}))).toBe(true);
+ await page.getByRole('button',{name:'提出改期並詢問客戶',exact:true}).click();await expect(page.locator('.reschedule-panel')).toContainText('等待客戶回覆');await expect(page.getByLabel('改期詢問訊息')).toContainText('15:40');await expect(page.getByLabel('改期詢問訊息')).not.toContainText('16:10');expect(submitted!.duration).toBe(100);expect(submitted!.version).toBe(1);
+ await page.getByRole('dialog').screenshot({path:'/tmp/linyan-reschedule-mobile.png'});await page.getByRole('button',{name:'撤回改期提案',exact:true}).click();await expect(page.locator('.change-history')).toContainText('店家已撤回');
+});
+
+test('customer reschedule link keeps the LINE login destination, waits for data and only confirms after accepting',async({page})=>{
+ await page.setViewportSize({width:390,height:844});await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));let loggedIn=false;await page.route('**/api/me',r=>r.fulfill({json:{user:loggedIn?{id:'customer',name:'測試客人',friend:true,admin:false}:null}}));
+ let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve});await page.route('**/api/changes/'+changeFixture.id,async r=>{await gate;return r.fulfill({json:{change:changeFixture,booking:{customer:'測試客人',service:'日式單根',spec:'100 根',status:'confirmed'}}})});
+ let responses=0;await page.route('**/api/changes/*/respond',r=>{expect(r.request().postDataJSON().decision).toBe('accept');responses++;return r.fulfill({json:{ok:true,state:'accepted'}})});
+ await page.goto('/#reschedule/'+changeFixture.id);await expect(page.getByRole('link',{name:'使用 LINE 登入',exact:true})).toHaveAttribute('href','/api/auth/line?returnTo='+encodeURIComponent('reschedule/'+changeFixture.id));
+ loggedIn=true;await page.reload();await expect(page.getByRole('status',{name:'載入改期提案中…'})).toBeVisible();await expect(page.getByRole('button',{name:'接受改期',exact:true})).toHaveCount(0);release();await expect(page.locator('.change-period.proposed')).toContainText('15:40');await expect(page.locator('.change-card')).not.toContainText('16:10');await page.getByRole('button',{name:'接受改期',exact:true}).click();await expect(page.locator('.change-card')).toContainText('已接受改期');await expect(page.getByRole('status')).toContainText('改期已成功');expect(responses).toBe(1);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+});
+
+test('my bookings let a customer decline a proposal while preserving their original reservation',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
+ let declined=false;await page.route('**/api/bookings',r=>r.fulfill({json:{bookings:[{...bookingFixture,reschedule:declined?undefined:changeFixture}]}}));await page.route('**/api/changes/*/respond',r=>{expect(r.request().postDataJSON().decision).toBe('decline');declined=true;return r.fulfill({json:{ok:true,state:'declined'}})});
+ await page.goto('/#my');await expect(page.getByRole('button',{name:'維持原時段',exact:true})).toBeVisible();await page.getByRole('button',{name:'維持原時段',exact:true}).click();await expect(page.locator('.change-card')).toHaveCount(0);await expect(page.locator('.reservation-info')).toContainText('10:00–12:00');await expect(page.getByRole('status')).toContainText('已告知店家維持原時段');
+});
+
+test('owner calendar clearly displays the proposed hold before the customer accepts',async({page})=>{
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));await page.route('**/api/admin/calendar-subscription',r=>r.fulfill({json:{enabled:false}}));await page.route('**/api/admin',r=>r.fulfill({json:{...adminFixture,changes:[{id:changeFixture.id,booking_id:bookingFixture.id,date:changeFixture.proposed.date,start:changeFixture.proposed.start,service_end:changeFixture.proposed.end,end:changeFixture.proposed.end+30*60000,state:'pending'}]}}));
+ await page.goto('/#admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();await expect(page.locator('.calendar-event.change_pending')).toContainText('改期待同意');await expect(page.locator('.calendar-event.change_pending')).toContainText('整理至 16:10');
 });

@@ -1,9 +1,9 @@
-export type Service = {id:string; name:string; category:'lashes'|'removal'|'brows'|'combo'; description:string; specs:{label:string;price:number}[]; duration:number|null; active:boolean; image?:string};
+export type Service = {id:string; name:string; category:'lashes'|'removal'|'brows'|'combo'; description:string; specs:{label:string;price:number;duration?:number|null}[]; duration:number|null; active:boolean; image?:string};
 export const SERVICES:Service[] = [
- {id:'single',name:'日式單根',category:'lashes',description:'輕盈單根，呈現自然細緻的眼神。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
- {id:'3d',name:'3D 小絨花',category:'lashes',description:'柔軟蓬鬆，為雙眼增添溫柔層次。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
- {id:'6d',name:'6D 小絨花',category:'lashes',description:'細緻綻放，打造更有存在感的睫毛。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
- {id:'yy',name:'YY 美人魚',category:'lashes',description:'交織的輕柔線條，映出迷人眼神。',specs:[{label:'150 根',price:900},{label:'200 根',price:1000},{label:'300 根',price:1100}],duration:120,active:true},
+ {id:'single',name:'日式單根',category:'lashes',description:'輕盈單根，呈現自然細緻的眼神。',specs:[{label:'100 根',price:900,duration:80},{label:'150 根',price:1000,duration:90},{label:'200 根',price:1100,duration:100}],duration:120,active:true},
+ {id:'3d',name:'3D 小絨花',category:'lashes',description:'柔軟蓬鬆，為雙眼增添溫柔層次。',specs:[{label:'100 根',price:900,duration:80},{label:'150 根',price:1000,duration:90},{label:'200 根',price:1100,duration:100}],duration:120,active:true},
+ {id:'6d',name:'6D 小絨花',category:'lashes',description:'細緻綻放，打造更有存在感的睫毛。',specs:[{label:'100 根',price:900,duration:80},{label:'150 根',price:1000,duration:90},{label:'200 根',price:1100,duration:100}],duration:120,active:true},
+ {id:'yy',name:'YY 美人魚',category:'lashes',description:'交織的輕柔線條，映出迷人眼神。',specs:[{label:'150 根',price:900,duration:90},{label:'200 根',price:1000,duration:100},{label:'300 根',price:1100,duration:120}],duration:120,active:true},
  {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。服務 4.5 小時；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100}))),duration:270,active:true},
  {id:'refill',name:'兩週內補睫',category:'lashes',description:'限原款式，半價優惠需由店家核對前次服務。',specs:[{label:'原款式半價・店家確認',price:0}],duration:60,active:true},
  {id:'remove-own',name:'本店卸除不續接',category:'removal',description:'本店睫毛卸除。',specs:[{label:'單次',price:200}],duration:30,active:true},
@@ -13,7 +13,7 @@ export const SERVICES:Service[] = [
  {id:'color-removal',name:'無創除色',category:'brows',description:'NT$2,000–3,000，實際金額依店家評估。',specs:[{label:'現場評估',price:2000}],duration:60,active:true}
 ];
 export type Settings = {address:string;instagram:string;lineUrl:string;bookingDays:number;leadHours:number;cancelHours:number;approvalHours:number;bufferMinutes:number;stepMinutes:number;reminders:boolean;addonDurations:{lower:number|null;own:number|null;other:number|null};weekly:Record<string,[string,string][]>;policies:string};
-export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:30,stepMinutes:30,reminders:false,addonDurations:{lower:30,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。新客美睫／霧眉預約需酌收 NT$500 訂金，於服務當天折抵。付款以現金或當下匯款為主。預約保留 15 分鐘；逾時可能調整服務或取消預約，恕不退訂金。取消與改期請依店家規則提前聯繫。'};
+export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:30,stepMinutes:15,reminders:false,addonDurations:{lower:30,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。新客美睫／霧眉預約需酌收 NT$500 訂金，於服務當天折抵。付款以現金或當下匯款為主。預約保留 15 分鐘；逾時可能調整服務或取消預約，恕不退訂金。取消與改期請依店家規則提前聯繫。'};
 export type Addons={lower:boolean;removal:'none'|'own'|'other'};
 export type TimeWindow=[string,string];
 export type DateSchedule={date:string;windows:string};
@@ -37,9 +37,11 @@ export function priceFor(service:Service,spec:number,addons:Addons){
  if(!['lashes','combo'].includes(service.category)&& (addons.lower||addons.removal!=='none'))throw new Error('此服務不適用美睫加購');
  return service.specs[spec].price+(addons.lower?200:0)+(addons.removal==='other'?200:0);
 }
-export function serviceDuration(service:Service,addons:Addons,settings:Settings):number|null{
- if(!service.duration||service.duration<1)return null;
- let duration=service.duration;
+export function serviceDuration(service:Service,addons:Addons,settings:Settings,spec=0):number|null{
+ const selected=service.specs[spec];if(!selected)return null;
+ const base=selected.duration===undefined?service.duration:selected.duration;
+ if(!base||base<1)return null;
+ let duration=base;
  for(const key of [addons.lower?'lower':null,addons.removal==='none'?null:addons.removal] as const){if(key){const d=settings.addonDurations[key];if(d===null)return null;duration+=d;}}
  return duration;
 }
@@ -57,7 +59,7 @@ export function availableSlots(date:string,duration:number,settings:Settings,win
  const day=taipeiMs(date,'00:00'); const today=taipeiMs(taipeiDay(now),'00:00');
  if(day<today||day>=today+settings.bookingDays*86400000)return [];
  const result:string[]=[];
- for(const [from,to] of windows){let t=taipeiMs(date,from);const limit=taipeiMs(date,to);for(;t+(duration+cleanupMinutes(settings))*60000<=limit;t+=settings.stepMinutes*60000){
+ for(const [from,to] of windows){const interval=settings.stepMinutes*60000;let t=day+Math.ceil((taipeiMs(date,from)-day)/interval)*interval;const limit=taipeiMs(date,to);for(;t+(duration+cleanupMinutes(settings))*60000<=limit;t+=settings.stepMinutes*60000){
   const end=t+(duration+cleanupMinutes(settings))*60000;
   if(t<now+settings.leadHours*3600000||occupied.some(o=>overlaps(t,end,o.start,o.end)))continue;
   result.push(new Date(t+8*3600000).toISOString().slice(11,16));

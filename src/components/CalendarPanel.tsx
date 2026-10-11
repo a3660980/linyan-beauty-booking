@@ -3,16 +3,18 @@ import {ChevronLeft,ChevronRight,Plus,X} from 'lucide-react';
 import {statusLabel,serviceEnd,taipeiDay,windowsForDate,type DateSchedule,type Settings} from '../domain';
 import DateScheduleEditor,{type SaveDateSchedule} from './DateScheduleEditor';
 import CalendarSubscription from './CalendarSubscription';
+import type {ChangeHold} from '../rescheduling';
 import type {Booking} from '../main';
 const time=(ms:number)=>new Date(ms+8*3600000).toISOString().slice(11,16);
 const offset=(date:string,n:number)=>new Date(Date.parse(date+'T12:00:00+08:00')+n*86400000+8*3600000).toISOString().slice(0,10);
 const monthOffset=(date:string,n:number)=>{const d=new Date(date.slice(0,7)+'-01T12:00:00+08:00');d.setUTCMonth(d.getUTCMonth()+n);return taipeiDay(d.getTime())};
-type Props={rows:Booking[];date:string;setDate:(d:string)=>void;onOpen:(b:Booking)=>void;settings:Settings;exceptions:DateSchedule[];onSaveSchedule:SaveDateSchedule;demo?:boolean};
-export default function CalendarPanel({rows,date,setDate,onOpen,settings,exceptions,onSaveSchedule,demo}:Props){
+type Props={changes?:ChangeHold[];rows:Booking[];date:string;setDate:(d:string)=>void;onOpen:(b:Booking)=>void;settings:Settings;exceptions:DateSchedule[];onSaveSchedule:SaveDateSchedule;demo?:boolean};
+export default function CalendarPanel({rows,changes=[],date,setDate,onOpen,settings,exceptions,onSaveSchedule,demo}:Props){
  const [view,setView]=useState('month'),[editing,setEditing]=useState<string|null>(null);
  const modal=useRef<HTMLElement>(null),opener=useRef<HTMLElement|null>(null);
  useEffect(()=>{if(!editing)return;opener.current=document.activeElement as HTMLElement;modal.current?.querySelector<HTMLInputElement>('input')?.focus();return()=>opener.current?.focus()},[!!editing]);
- const active=rows.filter(b=>['pending','confirmed','completed'].includes(b.status));
+ const holds=changes.flatMap(c=>{const b=rows.find(b=>b.id===c.booking_id);return b?[{...b,id:c.id,date:c.date,start:c.start,service_end:c.service_end,end:c.end,status:'change_pending',original:b}]:[]});
+ const active:(Booking&{original?:Booking})[]=[...rows.filter(b=>['pending','confirmed','completed'].includes(b.status)),...holds];
  const selected=new Date(date+'T12:00:00+08:00');
  let dates=[date];
  if(view==='week'){const first=offset(date,-((selected.getUTCDay()+6)%7));dates=Array.from({length:7},(_,i)=>offset(first,i));}
@@ -20,7 +22,7 @@ export default function CalendarPanel({rows,date,setDate,onOpen,settings,excepti
  const selectedWindows=windowsForDate(date,settings.weekly,exceptions);
  const open=(d:string)=>{setDate(d);setEditing(d)};
  const move=(n:number)=>setDate(view==='month'?monthOffset(date,n):offset(date,n*(view==='week'?7:1)));
- const event=(b:Booking)=><button className={'calendar-event '+b.status} key={b.id} onClick={()=>onOpen(b)}><strong>{b.customer} · {b.service_name}</strong><small>服務 {time(b.start)}–{time(serviceEnd(b))}　{statusLabel[b.status]}</small><small>整理至 {time(b.end)}</small></button>;
+ const event=(b:Booking&{original?:Booking})=><button className={'calendar-event '+b.status} key={b.id} onClick={()=>onOpen(b.original||b)}><strong>{b.customer} · {b.service_name}</strong><small>服務 {time(b.start)}–{time(serviceEnd(b))}　{b.status==='change_pending'?'改期待同意':statusLabel[b.status]}</small><small>整理至 {time(b.end)}</small></button>;
  return <>
   <CalendarSubscription demo={demo}/>
   <div className="calendar-toolbar"><div className="tabs compact">{[['day','日'],['week','週'],['month','月']].map(([id,name])=><button className={view===id?'active':''} key={id} onClick={()=>setView(id)}>{name}</button>)}</div><input aria-label="行事曆日期" type="date" value={date} onChange={e=>{if(e.target.value)setDate(e.target.value)}}/></div>
