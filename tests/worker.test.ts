@@ -12,7 +12,7 @@ class Statement {
  async all(){return {results:this.db.prepare(this.sql).all(...this.args as never[])}}
  async run(){const r=this.db.prepare(this.sql).run(...this.args as never[]);return {success:true,meta:{changes:Number(r.changes)}}}
 }
-function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
+function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));db.exec("CREATE TABLE notification_recipients(kind TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id))");const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
 async function request(f:ReturnType<typeof fixture>,path:string,user:string|null=null,method='GET',body?:unknown,origin='https://booking.test'){
  const headers:Record<string,string>={Origin:origin};if(user)headers.Cookie='linyan_session='+await sign({id:user,name:'測試使用者',expires:Date.now()+3600000},f.env.AUTH_SECRET!);if(body)headers['Content-Type']='application/json';return worker.fetch(new Request('https://booking.test/api'+path,{method,headers,body:body?JSON.stringify(body):undefined}),f.env,f.ctx);
 }
@@ -250,10 +250,10 @@ test('new studio policy migration updates the old default and preserves owner-wr
  const settings=JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string);
  const previous='預約須經店家確認後才正式成立。到店以現金付款。取消、改期與遲到規則請於預約前向店家確認。';
  f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...settings,policies:previous}));
- f.db.exec(sql);
+ f.db.exec(sql.split('CREATE TABLE IF NOT EXISTS notification_recipients')[0]);
  assert.deepEqual(JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string),settings);
  f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...settings,policies:'店家自行填寫的規則'}));
- f.db.exec(sql);
+ f.db.exec(sql.split('CREATE TABLE IF NOT EXISTS notification_recipients')[0]);
  assert.equal(JSON.parse(f.db.prepare('SELECT data FROM settings WHERE id=1').get()?.data as string).policies,'店家自行填寫的規則');
  f.db.close();
 });
@@ -276,5 +276,112 @@ test('LINE authentication errors return to the website with a safe prompt instea
   const failed=await worker.fetch(new Request('https://booking.test/api/auth/line/callback?state=state&code=test',{headers:{Cookie:'linyan_oauth='+valid}}),env,f.ctx);
   assert.equal(failed.headers.get('location'),'https://booking.test/?authError=failed#my');
   assert.equal((await request(f,'/bookings')).status,401);
+ }finally{f.db.close()}
+});
+
+function inviteFixture(){const f=fixture();f.db.exec(readFileSync(new URL('../migrations/0006_combo_and_invitations.sql',import.meta.url),'utf8').split('CREATE TABLE IF NOT EXISTS notification_recipients')[0]);return f}
+async function manualInvite(f:ReturnType<typeof fixture>,confirmed=false){
+ const response=await request(f,'/admin/bookings','owner','POST',payload());assert.equal(response.status,201);
+ const {id}=await response.json() as {id:string};
+ if(confirmed)assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);
+ const invite=await request(f,'/admin/bookings/'+id+'/invitation','owner','POST',{});assert.equal(invite.status,200);
+ const {url}=await invite.json() as {url:string};return {id,token:new URL(url).hash.slice('#invite/'.length)};
+}
+test('manual invitation only binds after verified LINE login and approval sends to the bound customer',async()=>{
+ const f=inviteFixture();try{
+  const {id,token}=await manualInvite(f);
+  assert.equal(token.length,43);assert.equal(f.db.prepare('SELECT user_id FROM bookings WHERE id=?').get(id)?.user_id,null);
+  assert.equal((await request(f,'/admin/bookings/'+id+'/invitation','customer','POST',{})).status,403);
+  assert.equal((await request(f,'/invitations/preview',null,'POST',{token})).status,401);
+  const preview=await (await request(f,'/invitations/preview','customer','POST',{token})).json() as Record<string,unknown>;
+  assert.ok(preview.booking);for(const value of ['phone','note','user_id','0900000000'])assert.ok(!JSON.stringify(preview).includes(value));
+  assert.ok(!JSON.stringify(f.db.prepare('SELECT * FROM booking_invitations').all()).includes(token));
+  assert.ok(!JSON.stringify(f.db.prepare('SELECT * FROM audit').all()).includes(token));
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token},'https://evil.test')).status,403);
+  f.db.prepare("UPDATE users SET friend=0 WHERE id='customer'").run();
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token})).status,403);
+  assert.equal(f.db.prepare('SELECT claimed_at FROM booking_invitations').get()?.claimed_at,null);
+  f.db.prepare("UPDATE users SET friend=1 WHERE id='customer'").run();
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token})).status,200);
+  const b=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;assert.equal(b.user_id,'customer');assert.equal(b.version,2);assert.equal(b.status,'pending');
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,0);
+  assert.equal((await request(f,'/invitations/claim','other','POST',{token})).status,404);
+  assert.equal((await request(f,'/admin/bookings/'+id+'/invitation','owner','POST',{})).status,409);
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:2,status:'confirmed',price:900,paid:false})).status,200);
+  assert.equal(f.db.prepare('SELECT user_id FROM notifications').get()?.user_id,'customer');
+  assert.equal(f.db.prepare('SELECT kind FROM notifications').get()?.kind,'confirmed');
+ }finally{f.db.close()}
+});
+test('rotated, expired, cancelled and already claimed invitations cannot bind a booking',async()=>{
+ const f=inviteFixture();try{
+  const {id,token}=await manualInvite(f);
+  const updated=await (await request(f,'/admin/bookings/'+id+'/invitation','owner','POST',{})).json() as {url:string};
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token})).status,404);
+  const newer=new URL(updated.url).hash.slice(8);
+  f.db.prepare('UPDATE booking_invitations SET expires_at=1').run();
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token:newer})).status,404);
+  f.db.prepare('UPDATE booking_invitations SET expires_at=?').run(Date.now()+86400000);
+  f.db.prepare("UPDATE bookings SET status='cancelled' WHERE id=?").run(id);
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token:newer})).status,404);
+  assert.equal(f.db.prepare('SELECT user_id FROM bookings WHERE id=?').get(id)?.user_id,null);
+ }finally{f.db.close()}
+});
+test('binding a previously approved manual booking queues exactly one confirmation and does not change payment',async()=>{
+ const f=inviteFixture();try{
+  const {id,token}=await manualInvite(f,true);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,0);
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token})).status,200);
+  assert.equal(f.db.prepare('SELECT kind,user_id FROM notifications').get()?.kind,'confirmed');
+  assert.equal(f.db.prepare('SELECT paid FROM bookings WHERE id=?').get(id)?.paid,0);
+  assert.equal((await request(f,'/invitations/claim','customer','POST',{token})).status,404);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,1);
+ }finally{f.db.close()}
+});
+test('LINE login round trips an invitation route and rejects untrusted destinations',async(t)=>{
+ const f=fixture(),env={...f.env,LINE_LOGIN_CHANNEL_ID:'test-login-id',LINE_LOGIN_CHANNEL_SECRET:'test-login-secret'};
+ try{
+  const route='invite/'+'A'.repeat(43),entry=await request({...f,env},'/auth/line?returnTo='+encodeURIComponent(route));
+  const token=entry.headers.get('set-cookie')!.split(';')[0].split('=')[1];
+  const oauth=await verify<{state:string;nonce:string;returnTo:string}>(token,env.AUTH_SECRET);assert.equal(oauth?.returnTo,route);
+  const wrong=await request({...f,env},'/auth/line?returnTo='+encodeURIComponent('https://evil.test'));
+  assert.equal((await verify<{returnTo:string}>(wrong.headers.get('set-cookie')!.split(';')[0].split('=')[1],env.AUTH_SECRET))?.returnTo,'booking');
+  let calls=0;t.mock.method(globalThis,'fetch',async()=>new Response(JSON.stringify(++calls===1?{id_token:'test',access_token:'test'}:calls===2?{sub:'customer',name:'測試客人',nonce:oauth!.nonce}:{friendFlag:true}),{headers:{'Content-Type':'application/json'}}));
+  const callback=await worker.fetch(new Request('https://booking.test/api/auth/line/callback?state='+oauth!.state+'&code=test',{headers:{Cookie:'linyan_oauth='+token}}),env,f.ctx);
+  assert.equal(callback.headers.get('location'),'https://booking.test/#'+route);
+  const expired=await sign({...oauth,expires:1},env.AUTH_SECRET);
+  const error=await worker.fetch(new Request('https://booking.test/api/auth/line/callback?state='+oauth!.state+'&code=test',{headers:{Cookie:'linyan_oauth='+expired}}),env,f.ctx);
+  assert.equal(error.headers.get('location'),'https://booking.test/?authError=expired#'+route);
+ }finally{f.db.close()}
+});
+test('combined menu migration uses saved prices, preserves existing records and is idempotent',()=>{
+ const f=fixture();try{
+  f.db.prepare("DELETE FROM services WHERE id='combo-brows-lashes'").run();
+  f.db.prepare("UPDATE services SET data=json_set(data,'$.specs[1].price',1300,'$.duration',155) WHERE id='single'").run();
+  f.db.prepare("UPDATE services SET data=json_set(data,'$.specs[0].price',5500) WHERE id='brows'").run();
+  const before=f.db.prepare('SELECT * FROM services ORDER BY id').all();
+  const sql=readFileSync(new URL('../migrations/0006_combo_and_invitations.sql',import.meta.url),'utf8');f.db.exec(sql.split('CREATE TABLE IF NOT EXISTS notification_recipients')[0]);
+  const service=JSON.parse(f.db.prepare("SELECT data FROM services WHERE id='combo-brows-lashes'").get()!.data as string);
+  assert.equal(service.duration,270);assert.equal(service.specs.length,12);assert.equal(service.specs.find((s:{label:string})=>s.label==='日式單根・150 根').price,6800);
+  assert.deepEqual(f.db.prepare("SELECT * FROM services WHERE id<>'combo-brows-lashes' ORDER BY id").all(),before);
+  f.db.exec(sql.split('-- Invitations')[0]);assert.equal(f.db.prepare("SELECT COUNT(*) AS n FROM services WHERE id='combo-brows-lashes'").get()?.n,1);
+ }finally{f.db.close()}
+});
+
+test('new customer bookings notify only the configured current admin without confirming the reservation',async()=>{
+ const f=fixture();f.env.ADMIN_LINE_USER_IDS='owner,other';f.db.prepare("INSERT INTO notification_recipients VALUES('review_requested','owner')").run();
+ try{
+  const response=await request(f,'/bookings','customer','POST',payload());assert.equal(response.status,201);
+  const {id}=await response.json() as {id:string};
+  const notices=f.db.prepare('SELECT * FROM notifications').all();assert.equal(notices.length,1);assert.equal(notices[0].user_id,'owner');assert.equal(notices[0].kind,'review_requested');assert.match(String(notices[0].text),/請審核/);assert.match(String(notices[0].text),/https:\/\/booking.test\/#admin/);
+  assert.equal(f.db.prepare('SELECT status FROM bookings WHERE id=?').get(id)?.status,'pending');
+  assert.equal((await request(f,'/bookings','customer','POST',payload())).status,409);assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,1);
+  assert.equal((await request(f,'/admin/bookings','owner','POST',{...payload(),time:'14:00'})).status,201);assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,1);
+ }finally{f.db.close()}
+});
+test('review notifications never fall back to a different admin or trust a client supplied recipient',async()=>{
+ const f=fixture();f.db.prepare("INSERT INTO notification_recipients VALUES('review_requested','customer')").run();
+ try{
+  assert.equal((await request(f,'/bookings','customer','POST',{...payload(),reviewRecipient:'other'})).status,201);
+  assert.equal(f.db.prepare('SELECT COUNT(*) AS n FROM notifications').get()?.n,0);
  }finally{f.db.close()}
 });

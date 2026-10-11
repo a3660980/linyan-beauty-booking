@@ -1,9 +1,10 @@
-export type Service = {id:string; name:string; category:'lashes'|'removal'|'brows'; description:string; specs:{label:string;price:number}[]; duration:number|null; active:boolean; image?:string};
+export type Service = {id:string; name:string; category:'lashes'|'removal'|'brows'|'combo'; description:string; specs:{label:string;price:number}[]; duration:number|null; active:boolean; image?:string};
 export const SERVICES:Service[] = [
  {id:'single',name:'日式單根',category:'lashes',description:'輕盈單根，呈現自然細緻的眼神。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
  {id:'3d',name:'3D 小絨花',category:'lashes',description:'柔軟蓬鬆，為雙眼增添溫柔層次。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
  {id:'6d',name:'6D 小絨花',category:'lashes',description:'細緻綻放，打造更有存在感的睫毛。',specs:[{label:'100 根',price:900},{label:'150 根',price:1000},{label:'200 根',price:1100}],duration:120,active:true},
  {id:'yy',name:'YY 美人魚',category:'lashes',description:'交織的輕柔線條，映出迷人眼神。',specs:[{label:'150 根',price:900},{label:'200 根',price:1000},{label:'300 根',price:1100}],duration:120,active:true},
+ {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。服務 4.5 小時，另保留 30 分鐘整理；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100}))),duration:270,active:true},
  {id:'refill',name:'兩週內補睫',category:'lashes',description:'限原款式，半價優惠需由店家核對前次服務。',specs:[{label:'原款式半價・店家確認',price:0}],duration:60,active:true},
  {id:'remove-own',name:'本店卸除不續接',category:'removal',description:'本店睫毛卸除。',specs:[{label:'單次',price:200}],duration:30,active:true},
  {id:'remove-other',name:'他店純卸除',category:'removal',description:'他店睫毛卸除。',specs:[{label:'單次',price:300}],duration:30,active:true},
@@ -33,7 +34,7 @@ export function windowsForDate(date:string,weekly:Settings['weekly'],exceptions:
 }
 export function priceFor(service:Service,spec:number,addons:Addons){
  if(!Number.isInteger(spec)||!service.specs[spec])throw new Error('請選擇有效的服務規格');
- if(service.category!=='lashes'&& (addons.lower||addons.removal!=='none'))throw new Error('此服務不適用美睫加購');
+ if(!['lashes','combo'].includes(service.category)&& (addons.lower||addons.removal!=='none'))throw new Error('此服務不適用美睫加購');
  return service.specs[spec].price+(addons.lower?200:0)+(addons.removal==='other'?200:0);
 }
 export function serviceDuration(service:Service,addons:Addons,settings:Settings):number|null{

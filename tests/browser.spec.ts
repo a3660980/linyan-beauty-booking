@@ -369,3 +369,44 @@ test('an expired session during a query returns to the in-page login prompt',asy
  await expect(page.getByRole('link',{name:'重新登入 LINE'})).toHaveAttribute('href','/api/auth/line?returnTo=my');
  await expect(page.locator('.reservation')).toHaveCount(0);
 });
+
+test('combined booking selects a lash style on mobile and reserves a five-hour interval',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
+ const date=futureDay();let serviceQuery='';
+ await page.route('**/api/availability/dates?*',r=>{serviceQuery=new URL(r.request().url()).searchParams.get('service')||'';return r.fulfill({json:{days:[{date,slots:['10:00']}],firstAvailableDate:date,duration:270}})});
+ let submitted:Record<string,unknown>|null=null;await page.route('**/api/bookings',r=>{submitted=r.request().postDataJSON();return r.fulfill({status:201,json:{id:'combo-test'}})});
+ await page.goto('/#booking');await page.getByRole('button',{name:/^霧眉＋睫毛/}).click();
+ await expect(page.locator('.booking-summary')).toContainText('服務 4.5 小時＋整理 30 分鐘');
+ await page.getByRole('group',{name:'組合睫毛款式'}).getByRole('button',{name:'YY 美人魚'}).click();
+ await page.getByRole('radio').last().check();await expect(page.locator('.booking-summary')).toContainText('YY 美人魚・300 根');await expect(page.locator('.summary-total')).toContainText('6,100');
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByRole('button',{name:'10:00',exact:true}).click();expect(serviceQuery).toBe('combo-brows-lashes');
+ await page.getByRole('button',{name:'填寫資料',exact:true}).click();await page.getByLabel('聯絡電話 *').fill('0900000000');await page.getByRole('checkbox').last().check();await page.getByRole('button',{name:'送出預約申請',exact:true}).click();
+ await expect(page.getByRole('heading',{name:'已收到預約申請'})).toBeVisible();expect(submitted!.serviceId).toBe('combo-brows-lashes');expect(submitted!.spec).toBe(11);
+});
+
+test('invitation preserves the LINE login destination, loads before showing details and binds only on confirmation',async({page})=>{
+ const token='A'.repeat(43);let loggedIn=false,claims=0;
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:'https://line.me/test'}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:loggedIn?{id:'customer',name:'測試客人',friend:true,admin:false}:null}}));
+ let release:()=>void=()=>{};const gate=new Promise<void>(resolve=>{release=resolve});
+ await page.route('**/api/invitations/preview',async r=>{expect(r.request().postDataJSON().token).toBe(token);await gate;await r.fulfill({json:{booking:{customer:'測試客人',service:'霧眉＋睫毛',spec:'日式單根・150 根',date:futureDay(),start:bookingFixture.start,status:'pending'}}})});
+ await page.route('**/api/invitations/claim',r=>{claims++;expect(r.request().postDataJSON().token).toBe(token);return r.fulfill({json:{ok:true,status:'pending'}})});
+ await page.goto('/#invite/'+token);await expect(page.getByRole('link',{name:'使用 LINE 登入',exact:true})).toHaveAttribute('href','/api/auth/line?returnTo='+encodeURIComponent('invite/'+token));expect(claims).toBe(0);
+ loggedIn=true;await page.reload();await expect(page.getByRole('status',{name:'載入邀請預約中…'})).toBeVisible();await expect(page.getByRole('button',{name:'確認並綁定這筆預約'})).toHaveCount(0);
+ release();await expect(page.locator('.summary-box')).toContainText('霧眉＋睫毛');expect(claims).toBe(0);
+ await page.getByRole('button',{name:'確認並綁定這筆預約'}).click();await expect(page.getByRole('heading',{name:'已綁定預約通知'})).toBeVisible();expect(claims).toBe(1);expect(page.url()).not.toContain(token);
+});
+
+test('owner can generate a private invitation for an unbound booking in the review dialog',async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
+ await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));
+ await page.route('**/api/admin',r=>r.fulfill({json:{...adminFixture,bookings:[{...bookingFixture,user_id:null}]}}));
+ let writes=0;await page.route('**/api/admin/bookings/test-booking/invitation',r=>{writes++;return r.fulfill({json:{url:'https://booking.test/#invite/'+'B'.repeat(43),expiresAt:Date.now()+3600000}})});
+ await page.goto('/#admin');await page.getByRole('button',{name:'審核預約',exact:true}).click();
+ const dialog=page.getByRole('dialog');await dialog.getByRole('button',{name:'產生邀請連結',exact:true}).click();await expect(dialog.getByLabel('此筆預約專屬網址')).toHaveValue('https://booking.test/#invite/'+'B'.repeat(43));expect(writes).toBe(1);
+ expect(await dialog.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+});

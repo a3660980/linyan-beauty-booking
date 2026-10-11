@@ -49,3 +49,13 @@ test('owner supplied service ranges reserve their upper bound plus 30 minutes cl
  assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:00']],[],now),[]);
  assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:30']],[],now),['10:00']);
 });
+test('combined brows and lashes occupies five hours and retains lash addon rules',()=>{
+ const service=SERVICES.find(s=>s.id==='combo-brows-lashes')!,cfg={...DEFAULT_SETTINGS,leadHours:0};
+ assert.equal(service.duration,270);assert.equal(service.specs.length,12);
+ const spec=service.specs.findIndex(s=>s.label==='日式單根・150 根');
+ assert.equal(priceFor(service,spec,{lower:false,removal:'none'}),6000);
+ assert.equal(priceFor(service,spec,{lower:true,removal:'other'}),6400);
+ assert.deepEqual(availableSlots('2026-10-08',270,cfg,[['16:30','21:00']],[],now),[]);
+ assert.deepEqual(availableSlots('2026-10-08',270,cfg,[['16:30','21:30']],[],now),['16:30']);
+ assert.equal(serviceDuration(service,{lower:true,removal:'own'},cfg),330);
+});
