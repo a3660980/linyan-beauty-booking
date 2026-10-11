@@ -4,9 +4,9 @@ import {normalizeWindows,taipeiMs,windowsForDate,type DateSchedule,type Settings
 import type {Booking} from '../main';
 
 export type SaveDateSchedule=(date:string,windows:TimeWindow[]|null)=>Promise<void>;
-type Props={date:string;setDate:(date:string)=>void;settings:Settings;exceptions:DateSchedule[];rows:Booking[];onSave:SaveDateSchedule};
+type Props={titleId?:string;heading?:string;date:string;setDate:(date:string)=>void;settings:Settings;exceptions:DateSchedule[];rows:Booking[];onSave:SaveDateSchedule};
 
-export default function DateScheduleEditor({date,setDate,settings,exceptions,rows,onSave}:Props){
+export default function DateScheduleEditor({date,setDate,settings,exceptions,rows,onSave,titleId='date-schedule-title',heading='當日可預約時間'}:Props){
  const current=windowsForDate(date,settings.weekly,exceptions);
  const source=exceptions.some(x=>x.date===date);
  const signature=JSON.stringify(current);
@@ -19,7 +19,7 @@ export default function DateScheduleEditor({date,setDate,settings,exceptions,row
  function add(){const from=windows.at(-1)?.[1]||'10:00';const minutes=Number(from.slice(0,2))*60+Number(from.slice(3));const end=Math.min(1439,minutes+120);setWindows([...windows,[from,`${String(Math.floor(end/60)).padStart(2,'0')}:${String(end%60).padStart(2,'0')}`]]);setError('')}
  async function save(remove=false){setError('');setBusy(true);try{taipeiMs(date,'00:00');await onSave(date,remove?null:normalizeWindows(closed?[]:windows))}catch(e){setError((e as Error).message)}finally{setBusy(false)}}
  return <div className="date-schedule-editor">
-  <div className="eyebrow">DAILY AVAILABILITY</div><h2 id="date-schedule-title">當日可預約時間</h2>
+  <div className="eyebrow">DAILY AVAILABILITY</div><h2 id={titleId} tabIndex={-1}>{heading}</h2>
   <p className="muted">點日期逐日排班，無須設定固定週班表。當日設定會取代該日的固定排班。</p>
   <label className="field"><span>排班日期</span><input type="date" required value={date} onChange={e=>{if(e.target.value)setDate(e.target.value)}} disabled={busy}/></label>
   <p className="schedule-source">目前：{source?'指定日期排班':current.length?'使用固定排班':'未開放預約'}</p>

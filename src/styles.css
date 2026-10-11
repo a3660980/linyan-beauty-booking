@@ -286,3 +286,35 @@ input::-webkit-datetime-edit{min-width:0;padding:0}
 .settings-schedule-tabs button:focus-visible,.settings-service-summary:focus-visible{outline:2px solid #9c7764;outline-offset:3px}
 
 .settings-save-bar.is-inline{position:static;box-shadow:none}
+
+.scheduled-dates{border-top:1px solid #e5d8cb;padding-top:24px;margin-top:28px;min-width:0}
+.scheduled-dates-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.scheduled-dates-heading h3{font-size:18px;margin:0;font-weight:500}
+.scheduled-dates-heading p{font-size:12px;color:#a18c7d;margin:7px 0 0;line-height:1.7}
+.scheduled-dates-count{font-size:12px;color:#92765e;background:#f0e7dc;padding:7px 11px;border-radius:20px;white-space:nowrap}
+.scheduled-dates-month{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:8px;margin:20px 0 10px}
+.scheduled-dates-month>.icon-button{min-height:44px;border:1px solid #e5d8cb;border-radius:8px;background:#fffdfa}
+.settings-stack .scheduled-dates-month .field{margin:0;max-width:none;min-width:0}
+.scheduled-dates-month select{text-align:center}
+.scheduled-dates-past{display:block;min-height:44px;font-size:12px;color:#927d70;margin-bottom:10px}
+.scheduled-dates-rows{display:grid;gap:10px}
+.settings-stack .scheduled-date-row{display:flex;align-items:center;gap:12px;border:1px solid #e5d8cb;border-radius:9px;padding:14px;background:#fffdfa}
+.settings-stack .scheduled-date-row.is-selected{border-color:#ae8975;background:#fbf3e9}
+.settings-stack .scheduled-date-row>.scheduled-date-info{min-width:0;flex:1}
+.scheduled-date-info>strong{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-weight:500;font-size:13px;line-height:1.7}
+.scheduled-date-info>strong>span{font-size:11px;color:#a18c7d}
+.scheduled-date-times{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.scheduled-date-times>span{font-size:11px;background:#f4ede4;color:#92735d;padding:3px 7px;border-radius:5px;line-height:1.6}
+.scheduled-date-times>.is-closed{background:#eee8e3;color:#938476}
+.settings-stack .scheduled-date-row>.text-link{font-size:12px;min-height:44px;white-space:nowrap;flex-shrink:0}
+.scheduled-dates-pages{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:16px}
+.scheduled-dates-pages>span{font-size:12px;color:#a18c7d;white-space:nowrap}
+.settings-stack .scheduled-dates-pages .button{min-height:44px;font-size:12px;padding:10px 12px;gap:4px}
+.scheduled-dates-empty{text-align:center;padding:25px 12px;color:#a18c7d;border:1px dashed #e5d8cb;border-radius:8px}
+.scheduled-dates-empty p{font-size:12px;margin:10px 0 0;line-height:1.8}
+@media(max-width:600px){.settings-stack .scheduled-date-row{padding:10px;gap:8px;flex-wrap:nowrap;align-items:center}.scheduled-date-info>strong{font-size:12px;gap:5px}.scheduled-date-info>strong>span{font-size:10px}.scheduled-date-times>span{font-size:10px;padding:3px 5px}.settings-stack .scheduled-dates-pages .button{padding:10px 8px;font-size:11px}.scheduled-dates-month{gap:6px}.scheduled-dates-heading h3{font-size:17px}.scheduled-dates-heading p{font-size:11px}}
+
+.scheduled-dates .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+
+.scheduled-date-modal .date-schedule-editor h2{padding-right:28px;font-size:24px;line-height:1.6;overflow-wrap:anywhere}.scheduled-date-modal .date-schedule-editor h2:focus{outline:none}
+@media(max-width:600px){.scheduled-date-modal .date-schedule-editor h2{font-size:21px}.scheduled-date-modal .field input[type=date],.scheduled-date-modal .field input[type=time]{font-size:16px;min-height:48px}}
