@@ -318,3 +318,21 @@ input::-webkit-datetime-edit{min-width:0;padding:0}
 
 .scheduled-date-modal .date-schedule-editor h2{padding-right:28px;font-size:24px;line-height:1.6;overflow-wrap:anywhere}.scheduled-date-modal .date-schedule-editor h2:focus{outline:none}
 @media(max-width:600px){.scheduled-date-modal .date-schedule-editor h2{font-size:21px}.scheduled-date-modal .field input[type=date],.scheduled-date-modal .field input[type=time]{font-size:16px;min-height:48px}}
+
+/* Let native iPhone date/time fields shrink with their parent rather than their localized value. */
+input[type=date],input[type=time]{display:block;box-sizing:border-box;min-width:0;min-inline-size:0;max-width:100%;max-inline-size:100%;-webkit-appearance:none;appearance:none;overflow:hidden}
+input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and-time-value{display:block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;text-align:left}
+input[type=date]::-webkit-datetime-edit,input[type=time]::-webkit-datetime-edit{min-width:0;padding:0;overflow:hidden}
+input[type=date]::-webkit-datetime-edit-fields-wrapper,input[type=time]::-webkit-datetime-edit-fields-wrapper{padding:0}
+.field{min-width:0}
+.calendar-toolbar{gap:16px;flex-wrap:wrap;min-width:0}
+.calendar-toolbar input[type=date]{flex:0 1 240px;width:240px;max-width:100%;min-width:0}
+@media(max-width:600px){
+ .field input[type=date],.field input[type=time],.calendar-toolbar input[type=date]{font-size:16px;min-height:48px}
+ .calendar-toolbar{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+ .calendar-toolbar .tabs{margin:0;width:fit-content;max-width:100%}
+ .calendar-toolbar input[type=date]{width:100%;max-width:100%;flex-basis:auto}
+ .booking-date-actions{display:grid;grid-template-columns:minmax(0,1fr);align-items:start;gap:12px}
+ .booking-date-actions>.field{width:100%;max-width:100%;min-width:0}
+ .booking-date-actions>.nearest-date{justify-self:start;min-height:44px}
+}
