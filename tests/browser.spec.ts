@@ -370,17 +370,17 @@ test('an expired session during a query returns to the in-page login prompt',asy
  await expect(page.locator('.reservation')).toHaveCount(0);
 });
 
-test('combined booking selects a lash style on mobile and reserves a five-hour interval',async({page})=>{
+test('combined booking selects root-specific service time on mobile',async({page})=>{
  await page.setViewportSize({width:390,height:844});
  await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));
  await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'customer',name:'測試客人',friend:true,admin:false}}}));
  const date=futureDay();let serviceQuery='';
- await page.route('**/api/availability/dates?*',r=>{serviceQuery=new URL(r.request().url()).searchParams.get('service')||'';return r.fulfill({json:{days:[{date,slots:['10:00']}],firstAvailableDate:date,duration:270}})});
+ await page.route('**/api/availability/dates?*',r=>{serviceQuery=new URL(r.request().url()).searchParams.get('service')||'';return r.fulfill({json:{days:[{date,slots:['10:00']}],firstAvailableDate:date,duration:280}})});
  let submitted:Record<string,unknown>|null=null;await page.route('**/api/bookings',r=>{submitted=r.request().postDataJSON();return r.fulfill({status:201,json:{id:'combo-test'}})});
  await page.goto('/#booking');await page.getByRole('button',{name:/^霧眉＋睫毛/}).click();
- await expect(page.locator('.booking-summary')).toContainText('服務 4.5 小時');await expect(page.locator('.booking-summary')).not.toContainText('整理');
+ await expect(page.locator('.booking-summary')).toContainText('服務 4 小時');await expect(page.locator('.booking-summary')).not.toContainText('整理');
  await page.getByRole('group',{name:'組合睫毛款式'}).getByRole('button',{name:'YY 美人魚'}).click();
- await page.getByRole('radio').last().check();await expect(page.locator('.booking-summary')).toContainText('YY 美人魚・300 根');await expect(page.locator('.summary-total')).toContainText('6,100');
+ await page.getByRole('radio').last().check();await expect(page.locator('.booking-summary')).toContainText('YY 美人魚・300 根');await expect(page.locator('.booking-summary')).toContainText('服務 4 小時 40 分鐘');await expect(page.locator('.summary-total')).toContainText('6,100');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByRole('button',{name:'10:00',exact:true}).click();expect(serviceQuery).toBe('combo-brows-lashes');
  await page.getByRole('button',{name:'填寫資料',exact:true}).click();await page.getByLabel('聯絡電話 *').fill('0900000000');await page.getByRole('checkbox').last().check();await page.getByRole('button',{name:'送出預約申請',exact:true}).click();

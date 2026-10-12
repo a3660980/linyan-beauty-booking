@@ -4,7 +4,7 @@ export const SERVICES:Service[] = [
  {id:'3d',name:'3D 小絨花',category:'lashes',description:'柔軟蓬鬆，為雙眼增添溫柔層次。',specs:[{label:'100 根',price:900,duration:80},{label:'150 根',price:1000,duration:90},{label:'200 根',price:1100,duration:100}],duration:120,active:true},
  {id:'6d',name:'6D 小絨花',category:'lashes',description:'細緻綻放，打造更有存在感的睫毛。',specs:[{label:'100 根',price:900,duration:80},{label:'150 根',price:1000,duration:90},{label:'200 根',price:1100,duration:100}],duration:120,active:true},
  {id:'yy',name:'YY 美人魚',category:'lashes',description:'交織的輕柔線條，映出迷人眼神。',specs:[{label:'150 根',price:900,duration:90},{label:'200 根',price:1000,duration:100},{label:'300 根',price:1100,duration:120}],duration:120,active:true},
- {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。服務 4.5 小時；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100}))),duration:270,active:true},
+ {id:'combo-brows-lashes',name:'霧眉＋睫毛',category:'combo',description:'一次完成眉眼的美好。100 根服務 4 小時，每增加 50 根加 10 分鐘；可選擇睫毛款式與根數。',specs:['日式單根','3D 小絨花','6D 小絨花','YY 美人魚'].flatMap((name,i)=>(i===3?[150,200,300]:[100,150,200]).map((roots,j)=>({label:name+'・'+roots+' 根',price:5900+j*100,duration:240+(roots-100)/50*10}))),duration:240,active:true},
  {id:'refill',name:'兩週內補睫',category:'lashes',description:'限原款式，半價優惠需由店家核對前次服務。',specs:[{label:'原款式半價・店家確認',price:0}],duration:60,active:true},
  {id:'remove-own',name:'本店卸除不續接',category:'removal',description:'本店睫毛卸除。',specs:[{label:'單次',price:200}],duration:30,active:true},
  {id:'remove-other',name:'他店純卸除',category:'removal',description:'他店睫毛卸除。',specs:[{label:'單次',price:300}],duration:30,active:true},
@@ -66,6 +66,7 @@ export function availableSlots(date:string,duration:number,settings:Settings,win
  }}return [...new Set(result)].sort();
 }
 export const statusLabel:Record<string,string>={pending:'等待確認',confirmed:'預約成功',completed:'服務完成',cancelled:'已取消',rejected:'未成立',expired:'申請已失效',no_show:'未到店'};
+export function formatDuration(minutes:number){const hours=Math.floor(minutes/60),remaining=minutes%60;return hours?`${hours} 小時${remaining?` ${remaining} 分鐘`:''}`:`${remaining} 分鐘`}
 export function money(n:number){return new Intl.NumberFormat('zh-TW').format(n)}
 export function withinCalendarMonths(previous:number,next:number,months:number){
  const limit=new Date(previous+8*3600000),day=limit.getUTCDate();

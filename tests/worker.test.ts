@@ -580,3 +580,23 @@ test('binding a LINE invitation cannot revive a proposal invalidated by a concur
   const row=f.db.prepare('SELECT user_id,price,version FROM bookings WHERE id=?').get(id)!;assert.equal(row.user_id,'customer');assert.equal(row.price,950);assert.equal(row.version,3);
  }finally{f.db.close()}
 });
+
+test('combo root-duration migration preserves saved prices, standalone services and booked snapshots while new reservations use full cleanup',async()=>{
+ const f=fixture();try{
+  const original=SERVICES.find(service=>service.id==='combo-brows-lashes')!;
+  const legacy={...original,description:'一次完成眉眼的美好。服務 4.5 小時；可選擇睫毛款式與根數。',duration:270,specs:original.specs.map((spec,i)=>({label:spec.label,price:i===1?6800:spec.price}))};
+  f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify(legacy),legacy.id);
+  const booked=await request(f,'/bookings','customer','POST',{...payload(),serviceId:legacy.id});assert.equal(booked.status,201);
+  const snapshots=f.db.prepare('SELECT * FROM bookings ORDER BY id').all(),standalone=f.db.prepare("SELECT * FROM services WHERE id<>'combo-brows-lashes' ORDER BY id").all();
+  const migration=readFileSync(new URL('../migrations/0011_combo_root_durations.sql',import.meta.url),'utf8');f.db.exec(migration);
+  assert.deepEqual(f.db.prepare('SELECT * FROM bookings ORDER BY id').all(),snapshots);assert.deepEqual(f.db.prepare("SELECT * FROM services WHERE id<>'combo-brows-lashes' ORDER BY id").all(),standalone);
+  const saved=JSON.parse(String(f.db.prepare('SELECT data FROM services WHERE id=?').get(legacy.id)!.data));assert.equal(saved.duration,240);assert.ok(saved.description.includes('每增加 50 根加 10 分鐘'));assert.deepEqual(saved.specs.map((spec:{price:number})=>spec.price),legacy.specs.map(spec=>spec.price));
+  for(const spec of saved.specs as {label:string;duration:number}[]){const roots=Number(spec.label.split('・')[1].replace(' 根',''));assert.equal(spec.duration,240+(roots-100)/50*10)}
+  const date=offsetDate(payload().date,1);f.db.prepare('INSERT INTO exceptions VALUES(?,?)').run(date,JSON.stringify([['10:00','14:30']]));
+  const availability=async(spec:number)=>await(await request(f,`/availability?service=${legacy.id}&spec=${spec}&date=${date}`)).json() as {duration:number;slots:string[]};
+  assert.deepEqual(await availability(0),{slots:['10:00'],duration:240});assert.deepEqual(await availability(1),{slots:[],duration:250});assert.equal((await availability(11)).duration,280);
+  const created=await request(f,'/bookings','other','POST',{...payload(),serviceId:legacy.id,date});assert.equal(created.status,201);const row=f.db.prepare('SELECT start,service_end,end FROM bookings WHERE user_id=?').get('other')!;assert.equal(Number(row.service_end)-Number(row.start),240*60000);assert.equal(Number(row.end)-Number(row.service_end),30*60000);
+  const unchanged=f.db.prepare('SELECT * FROM services WHERE id=?').get(legacy.id);f.db.exec(migration);assert.deepEqual(f.db.prepare('SELECT * FROM services WHERE id=?').get(legacy.id),unchanged);
+  f.db.prepare("UPDATE services SET data=json_set(data,'$.description','店家自訂組合說明') WHERE id=?").run(legacy.id);f.db.exec(migration);assert.equal(JSON.parse(String(f.db.prepare('SELECT data FROM services WHERE id=?').get(legacy.id)!.data)).description,'店家自訂組合說明');
+ }finally{f.db.close()}
+});
