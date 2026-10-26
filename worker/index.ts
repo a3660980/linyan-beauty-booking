@@ -4,7 +4,7 @@ import {createInvitation,useInvitation,confirmationText} from './invitations.ts'
 import {assertBookingEligibility} from './bookingRules.ts';
 import {expireChanges,bookingChanges,customerChange,proposeChange,customerChangeDetails,respondToChange,withdrawChange,type BookingChange} from './rescheduling.ts';
 import {calendarFeed,manageCalendarSubscription} from './calendar.ts';
-type Booking={id:string;user_id:string|null;customer:string;phone:string;note:string;service_id:string;service_name:string;spec:string;addons:string;date:string;start:number;end:number;service_end?:number|null;price:number;price_confirmed:number;status:string;expires_at:number|null;created_at:number;updated_at:number;paid:number;paid_amount:number|null;previous_id:string|null;group_code:string|null;companion:string;version:number};
+type Booking={id:string;user_id:string|null;customer:string;phone:string;note:string;service_id:string;service_name:string;spec:string;addons:string;date:string;start:number;end:number;service_end?:number|null;price:number;price_confirmed:number;status:string;expires_at:number|null;created_at:number;updated_at:number;paid:number;paid_amount:number|null;paid_at:number|null;previous_id:string|null;group_code:string|null;companion:string;version:number};
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'}});
 function fail(message:string,status=400):never{throw Object.assign(new Error(message),{status})}
 function text(value:unknown,max=200,required=false){if(typeof value!=='string'||value.length>max||(required&&!value.trim()))fail('請檢查必填欄位與字數');return value.trim();}
@@ -138,7 +138,7 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
  }
  if(path==='/api/admin'&&method==='GET'){
   await expire(env);const rows=await env.DB.prepare('SELECT * FROM bookings ORDER BY start DESC LIMIT 1000').all<Booking>();const notifications=await env.DB.prepare('SELECT id,booking_id,kind,state,attempts,error,sent_at FROM notifications ORDER BY rowid DESC LIMIT 300').all();const ex=await env.DB.prepare('SELECT * FROM exceptions ORDER BY date').all();const changes=await env.DB.prepare("SELECT * FROM booking_changes WHERE state='pending' ORDER BY start").all<BookingChange>();
-  return json({changes:changes.results,bookings:rows.results,notifications:notifications.results,exceptions:ex.results,settings:await settings(env),services:await services(env),ready:{login:!!env.LINE_LOGIN_CHANNEL_ID&&!!env.LINE_LOGIN_CHANNEL_SECRET,notifications:!!env.LINE_CHANNEL_ACCESS_TOKEN,webhook:!!env.LINE_CHANNEL_SECRET,session:!!env.AUTH_SECRET&&env.AUTH_SECRET.length>=32,reviewNotifications:!!await reviewRecipient(env)}});
+  return json({today:taipeiDay(),changes:changes.results,bookings:rows.results,notifications:notifications.results,exceptions:ex.results,settings:await settings(env),services:await services(env),ready:{login:!!env.LINE_LOGIN_CHANNEL_ID&&!!env.LINE_LOGIN_CHANNEL_SECRET,notifications:!!env.LINE_CHANNEL_ACCESS_TOKEN,webhook:!!env.LINE_CHANNEL_SECRET,session:!!env.AUTH_SECRET&&env.AUTH_SECRET.length>=32,reviewNotifications:!!await reviewRecipient(env)}});
  }
  if(path==='/api/admin/init'&&method==='POST'){
   await env.DB.batch([env.DB.prepare('INSERT OR IGNORE INTO settings(id,data) VALUES(1,?)').bind(JSON.stringify(DEFAULT_SETTINGS)),...SERVICES.map(x=>env.DB.prepare('INSERT OR IGNORE INTO services(id,data) VALUES(?,?)').bind(x.id,JSON.stringify(x)))]);await audit(env,s,'initialize');return json({ok:true});
@@ -158,13 +158,16 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
   const b=await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(action[1]).first<Booking>();if(!b)fail('預約不存在',404);const d=await body(req);const version=integer(d.version,1,1000000);if(version!==b.version)fail('預約已被更新，請重新整理',409);
   const next=text(d.status,20,true);const allowed:Record<string,string[]>={pending:['confirmed','rejected','cancelled'],confirmed:['confirmed','completed','cancelled','no_show'],completed:['completed'],no_show:['no_show'],cancelled:['cancelled'],rejected:['rejected'],expired:['expired']};if(!allowed[b.status]?.includes(next))fail('不允許此狀態變更',409);if(b.status==='pending'&&b.expires_at!<=Date.now())fail('申請已失效，請客人重新預約',409);
   if(b.status==='confirmed'&&b.date>taipeiDay()&&next!=='cancelled')fail('預約日期尚未到，目前只能取消或提出改期',409);
-  const price=integer(d.price??b.price,0,100000),paid=d.paid===true?1:0;const paidAmount=paid?integer(d.paidAmount??price,0,100000):null;
+  const editPayment=next===b.status||b.status==='pending'&&next==='confirmed';
+  const price=editPayment?integer(d.price??b.price,0,100000):b.price,paid=editPayment?(d.paid===true?1:0):b.paid;
+  const paidAmount=editPayment?(paid?integer(d.paidAmount??price,0,100000):null):b.paid_amount;
+  const paidAt=editPayment?(paid?(b.paid&&b.paid_amount===paidAmount?b.paid_at??Date.now():Date.now()):null):b.paid_at;
   if(next==='confirmed'){
    const hold=await env.DB.prepare("SELECT id FROM booking_changes WHERE booking_id=? AND state='pending' AND expires_at>?").bind(b.id,Date.now()).first();
    if(hold)fail('已有等待客戶回覆的改期提案，請先撤回或等客戶回覆',409);
    await assertBookingEligibility(env,b,b.start,price);
   }
-  const r=await env.DB.prepare('UPDATE bookings SET status=?,price=?,price_confirmed=1,paid=?,paid_amount=?,paid_at=?,updated_at=?,version=version+1 WHERE id=? AND version=?').bind(next,price,paid,paidAmount,paid?Date.now():null,Date.now(),b.id,version).run();if(!r.meta.changes)fail('預約已被更新',409);
+  const r=await env.DB.prepare('UPDATE bookings SET status=?,price=?,price_confirmed=1,paid=?,paid_amount=?,paid_at=?,updated_at=?,version=version+1 WHERE id=? AND version=?').bind(next,price,paid,paidAmount,paidAt,Date.now(),b.id,version).run();if(!r.meta.changes)fail('預約已被更新',409);
   await audit(env,s,`booking_${next}`,b.id);if(next!==b.status&&['confirmed','rejected','cancelled'].includes(next))await notify(env,b,next,next==='confirmed'?confirmationText(b,price,(await settings(env)).address):next==='rejected'?'很抱歉，此次預約未能成立，請重新選擇時段或聯絡店家。':'您的預約已由店家取消，請聯絡店家確認。',origin);
   ctx.waitUntil(pushNotifications(env));return json({ok:true});
  }

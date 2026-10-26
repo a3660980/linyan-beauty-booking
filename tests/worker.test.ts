@@ -648,3 +648,14 @@ test('new bookings and proposals reserve ten-minute cleanup, protect overlaps an
   assert.equal((await request(f,'/admin/settings','owner','PUT',{...cfg,bufferMinutes:9})).status,400);
  }finally{f.db.close()}
 });
+
+test('status changes preserve existing payments even when an older page submits edited financial fields',async()=>{
+ const f=fixture();try{
+  const {id}=await booked(f),date=taipeiDay(),start=taipeiMs(date,'10:00'),paidAt=Date.now()-86400000;
+  f.db.prepare('UPDATE bookings SET date=?,start=?,service_end=?,end=?,paid_at=? WHERE id=?').run(date,start,start+90*60000,start+120*60000,paidAt,id);
+  const response=await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:2,status:'completed',price:9999,paid:false,paidAmount:0});assert.equal(response.status,200);
+  const row=f.db.prepare('SELECT status,price,paid,paid_amount,paid_at FROM bookings WHERE id=?').get(id)!;assert.equal(row.status,'completed');assert.equal(row.price,900);assert.equal(row.paid,1);assert.equal(row.paid_amount,900);assert.equal(row.paid_at,paidAt);
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:3,status:'completed',price:900,paid:true,paidAmount:900})).status,200);assert.equal(f.db.prepare('SELECT paid_at FROM bookings WHERE id=?').get(id)!.paid_at,paidAt);
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:4,status:'completed',price:900,paid:false})).status,200);const unpaid=f.db.prepare('SELECT paid,paid_amount,paid_at FROM bookings WHERE id=?').get(id)!;assert.equal(unpaid.paid,0);assert.equal(unpaid.paid_amount,null);assert.equal(unpaid.paid_at,null);
+ }finally{f.db.close()}
+});
