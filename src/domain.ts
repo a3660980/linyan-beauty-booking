@@ -13,7 +13,7 @@ export const SERVICES:Service[] = [
  {id:'color-removal',name:'無創除色',category:'brows',description:'NT$2,000–3,000，實際金額依店家評估。',specs:[{label:'現場評估',price:2000}],duration:60,active:true}
 ];
 export type Settings = {address:string;instagram:string;lineUrl:string;bookingDays:number;leadHours:number;cancelHours:number;approvalHours:number;bufferMinutes:number;stepMinutes:number;reminders:boolean;addonDurations:{lower:number|null;own:number|null;other:number|null};weekly:Record<string,[string,string][]>;policies:string};
-export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:30,stepMinutes:15,reminders:false,addonDurations:{lower:30,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。新客美睫／霧眉預約需酌收 NT$500 訂金，於服務當天折抵。付款以現金或當下匯款為主。預約保留 15 分鐘；逾時可能調整服務或取消預約，恕不退訂金。取消與改期請依店家規則提前聯繫。'};
+export const DEFAULT_SETTINGS:Settings={address:'',instagram:'',lineUrl:'',bookingDays:30,leadHours:12,cancelHours:24,approvalHours:12,bufferMinutes:10,stepMinutes:15,reminders:false,addonDurations:{lower:30,own:30,other:30},weekly:{'0':[],'1':[],'2':[],'3':[],'4':[],'5':[],'6':[]},policies:'預約須經店家確認後才正式成立。新客美睫／霧眉預約需酌收 NT$500 訂金，於服務當天折抵。付款以現金或當下匯款為主。預約保留 15 分鐘；逾時可能調整服務或取消預約，恕不退訂金。取消與改期請依店家規則提前聯繫。'};
 export type Addons={lower:boolean;removal:'none'|'own'|'other'};
 export type TimeWindow=[string,string];
 export type DateSchedule={date:string;windows:string};
@@ -52,7 +52,7 @@ export function offsetDate(date:string,days:number){return taipeiDay(taipeiMs(da
 export function bookingDates(count:number,now=Date.now()){const first=taipeiDay(now);return Array.from({length:count},(_,i)=>offsetDate(first,i))}
 export function weekDates(date:string){const first=offsetDate(date,-((weekday(date)+6)%7));return Array.from({length:7},(_,i)=>offsetDate(first,i))}
 export function overlaps(a:number,b:number,c:number,d:number){return a<d&&c<b;}
-export function cleanupMinutes(settings:Pick<Settings,'bufferMinutes'>){return Math.max(30,settings.bufferMinutes)}
+export function cleanupMinutes(settings:Pick<Settings,'bufferMinutes'>){return Math.max(10,settings.bufferMinutes)}
 // Occupied end remains private; service_end is a snapshot independent of later settings changes.
 export function serviceEnd(b:{start:number;end:number;service_end?:number|null}){return b.service_end??Math.max(b.start,b.end-30*60000)}
 export function availableSlots(date:string,duration:number,settings:Settings,windows:[string,string][],occupied:{start:number;end:number}[],now=Date.now()){

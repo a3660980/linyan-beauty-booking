@@ -12,7 +12,7 @@ class Statement {
  async all(){return {results:this.db.prepare(this.sql).all(...this.args as never[])}}
  async run(){const r=this.db.prepare(this.sql).run(...this.args as never[]);return {success:true,meta:{changes:Number(r.changes)}}}
 }
-function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));db.exec('ALTER TABLE bookings ADD COLUMN service_end INTEGER');db.exec(readFileSync(new URL('../migrations/0009_booking_changes.sql',import.meta.url),'utf8'));db.exec("CREATE TABLE notification_recipients(kind TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id))");const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90,specs:s.specs.map(spec=>({...spec,duration:90}))}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
+function fixture(){const db=new DatabaseSync(':memory:');db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));db.exec(readFileSync(new URL('../migrations/0002_group_limit.sql',import.meta.url),'utf8'));db.exec('ALTER TABLE bookings ADD COLUMN service_end INTEGER');db.exec(readFileSync(new URL('../migrations/0009_booking_changes.sql',import.meta.url),'utf8'));db.exec("CREATE TABLE notification_recipients(kind TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id))");const adapter={prepare:(sql:string)=>new Statement(db,sql),batch:async(statements:Statement[])=>{db.exec('BEGIN');try{const results=[];for(const s of statements)results.push(await s.run());db.exec('COMMIT');return results}catch(e){db.exec('ROLLBACK');throw e}}};const env={DB:adapter as unknown as D1Database,AUTH_SECRET:'x'.repeat(40),ADMIN_LINE_USER_IDS:'owner',APP_ORIGIN:'https://booking.test',ASSETS:{fetch:()=>new Response('static')} as unknown as Fetcher} satisfies Env;db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))}));for(const s of SERVICES)db.prepare('INSERT INTO services VALUES(?,?)').run(s.id,JSON.stringify({...s,duration:90,specs:s.specs.map(spec=>({...spec,duration:90}))}));for(const id of ['customer','other','owner'])db.prepare('INSERT INTO users VALUES(?,?,1,?)').run(id,'測試使用者',Date.now());const ctx={waitUntil:(_p:Promise<unknown>)=>{}} as ExecutionContext;return {db,env,ctx};}
 async function request(f:ReturnType<typeof fixture>,path:string,user:string|null=null,method='GET',body?:unknown,origin='https://booking.test'){
  const headers:Record<string,string>={Origin:origin};if(user)headers.Cookie='linyan_session='+await sign({id:user,name:'測試使用者',expires:Date.now()+3600000},f.env.AUTH_SECRET!);if(body)headers['Content-Type']='application/json';return worker.fetch(new Request('https://booking.test/api'+path,{method,headers,body:body?JSON.stringify(body):undefined}),f.env,f.ctx);
 }
@@ -60,7 +60,7 @@ test('each administrator owns a separately revocable subscription and current au
  }finally{f.db.close()}
 });
 
-test('the cookie-free calendar tracks confirmed and completed bookings with stable identity, buffer and limited personal data',async()=>{
+test('the cookie-free calendar tracks confirmed and completed bookings with stable identity, buffer and limited personal data',async(t)=>{
  const f=calendarFixture();
  try{
   const booking=await (await request(f,'/bookings','customer','POST',{...payload(),customer:'私人測試客人',note:'不公開的備註'})).json() as {id:string};
@@ -78,7 +78,7 @@ test('the cookie-free calendar tracks confirmed and completed bookings with stab
   for(const privateValue of ['0900000000','不公開的備註','user_id','NT$900'])assert.ok(!ics.includes(privateValue));
   assert.equal(await (await feedRequest(f,data.httpsUrl)).text(),ics);
   const head=await feedRequest(f,data.httpsUrl,'HEAD');assert.equal(head.status,200);assert.equal(await head.text(),'');assert.match(head.headers.get('content-type')!,/^text\/calendar/);
-  await update(2,'completed');const completed=await (await feedRequest(f,data.httpsUrl)).text();
+  const realNow=Date.now(),completedAt=taipeiMs(payload().date,'23:00');t.mock.method(Date,'now',()=>completedAt);await update(2,'completed');t.mock.method(Date,'now',()=>realNow);const completed=await (await feedRequest(f,data.httpsUrl)).text();
   assert.ok(completed.includes('（已完成）'));assert.ok(completed.includes('SEQUENCE:3'));assert.ok(completed.includes(`UID:${booking.id}@booking.test`));
   const cancelled=await (await request(f,'/bookings','customer','POST',{...payload(),date:offsetDate(payload().date,1)})).json() as {id:string};
   assert.equal((await request(f,`/admin/bookings/${cancelled.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);
@@ -151,7 +151,7 @@ test('LINE login uses the same canonical callback through authorization, token e
 test('signed sessions reject tampering, expired sessions and untrusted identity',async()=>{const f=fixture();const t=await sign({id:'test'},f.env.AUTH_SECRET!);assert.deepEqual(await verify(t,f.env.AUTH_SECRET),{id:'test'});assert.equal(await verify(t+'x',f.env.AUTH_SECRET),null);assert.equal((await request(f,'/admin','customer')).status,403);assert.equal((await request(f,'/bookings')).status,401);assert.equal((await request(f,'/bookings','customer','POST',payload(),'https://evil.test')).status,403);f.db.close();});
 test('two clients cannot reserve the same full occupied interval',async()=>{const f=fixture();const first=await request(f,'/bookings','customer','POST',payload());assert.equal(first.status,201);const second=await request(f,'/bookings','other','POST',{...payload(),time:'10:30'});assert.equal(second.status,409);const r=f.db.prepare('SELECT status,paid FROM bookings').get();assert.equal(r?.status,'pending');assert.equal(r?.paid,0);f.db.close();});
 test('SQLite overlap trigger prevents a race even without availability precheck',()=>{const f=fixture();const insert=f.db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,end,price,status,created_at,updated_at) VALUES(?, '測試', '0900000000','single','單根','100根','{}','2026-10-08',?,?,900,'pending',1,1)");insert.run('one',1000,2000);assert.throws(()=>insert.run('two',1500,2500),/SLOT_TAKEN/);insert.run('three',2000,3000);assert.throws(()=>f.db.prepare('UPDATE bookings SET start=1500 WHERE id=?').run('three'),/SLOT_TAKEN/);f.db.close();});
-test('customers cannot read or cancel another user booking; approval is not payment',async()=>{const f=fixture();const created=await (await request(f,'/bookings','customer','POST',payload())).json() as {id:string};const rows=await (await request(f,'/bookings','other')).json() as {bookings:unknown[]};assert.equal(rows.bookings.length,0);assert.equal((await request(f,`/bookings/${created.id}/cancel`,'other','POST',{})).status,404);assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);const b=f.db.prepare('SELECT * FROM bookings').get();assert.equal(b?.status,'confirmed');assert.equal(b?.paid,0);assert.equal(f.db.prepare('SELECT state FROM notifications').get()?.state,'queued');assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:true,paidAmount:900})).status,409);assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:2,status:'confirmed',price:900,paid:true,paidAmount:900})).status,200);f.db.close();});
+test('customers cannot read or cancel another user booking; approval is not payment',async()=>{const f=fixture();const created=await (await request(f,'/bookings','customer','POST',payload())).json() as {id:string};const rows=await (await request(f,'/bookings','other')).json() as {bookings:unknown[]};assert.equal(rows.bookings.length,0);assert.equal((await request(f,`/bookings/${created.id}/cancel`,'other','POST',{})).status,404);assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,200);const b=f.db.prepare('SELECT * FROM bookings').get();assert.equal(b?.status,'confirmed');assert.equal(b?.paid,0);assert.equal(f.db.prepare('SELECT state FROM notifications').get()?.state,'queued');assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:true,paidAmount:900})).status,409);assert.equal((await request(f,`/admin/bookings/${created.id}`,'owner','PATCH',{version:2,status:'confirmed',price:900,paid:true,paidAmount:900})).status,409);f.db.close();});
 test('expired requests release slots and cannot be approved',async()=>{const f=fixture();const c=await (await request(f,'/bookings','customer','POST',payload())).json() as {id:string};f.db.prepare('UPDATE bookings SET expires_at=1 WHERE id=?').run(c.id);assert.equal((await request(f,`/admin/bookings/${c.id}`,'owner','PATCH',{version:1,status:'confirmed',price:900,paid:false})).status,409);const available=await (await request(f,`/availability?service=single&date=${payload().date}`)).json() as {slots:string[]};assert.ok(available.slots.includes('10:00'));assert.equal(f.db.prepare('SELECT status FROM bookings').get()?.status,'expired');f.db.close();});
 test('unset durations, unverified friendships and invalid settings block writes',async()=>{const f=fixture();f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify({...SERVICES[0],duration:null,specs:SERVICES[0].specs.map(s=>({...s,duration:null}))}),'single');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,409);f.db.prepare('UPDATE users SET friend=0 WHERE id=?').run('customer');assert.equal((await request(f,'/bookings','customer','POST',payload())).status,403);assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,stepMinutes:0})).status,400);f.db.close();});
 test('webhook body signatures are validated',async()=>{const secret='test webhook signing value';const raw='{"events":[]}';const k=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',k,new TextEncoder().encode(raw)));const sig=btoa(String.fromCharCode(...bytes));assert.equal(await validLineSignature(raw,sig,secret),true);assert.equal(await validLineSignature(raw+' ',sig,secret),false);const f=fixture();assert.equal((await request(f,'/line/webhook',null,'POST',{events:[]})).status,401);f.db.close();});
@@ -160,7 +160,7 @@ test('nearest available dates respect full duration, occupied slots, expiry and 
  t.mock.method(Date,'now',()=>Date.parse('2026-10-07T00:00:00+08:00'));
  const f=fixture(),first=taipeiDay(),blocked=offsetDate(first,2),open=offsetDate(first,10);
  try{
-  f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...DEFAULT_SETTINGS,leadHours:0,bookingDays:12}));
+  f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify({...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0,bookingDays:12}));
   f.db.prepare('UPDATE services SET data=? WHERE id=?').run(JSON.stringify({...SERVICES[0],specs:SERVICES[0].specs.map(s=>({...s,duration:undefined}))}),'single');
   for(const [date,windows] of [[offsetDate(first,1),[['10:00','12:00']]],[blocked,[['10:00','12:30']]],[open,[['10:00','13:00']]],[offsetDate(first,12),[['10:00','18:00']]]] as const){
    f.db.prepare('INSERT INTO exceptions VALUES(?,?)').run(date,JSON.stringify(windows));
@@ -191,7 +191,7 @@ test('nearest available dates respect full duration, occupied slots, expiry and 
 
 test('date schedules open split windows without weekly shifts, and closure preserves existing bookings',async()=>{
  const f=fixture(),date=payload().date;
- const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  assert.equal((await request(f,'/admin/settings','owner','PUT',cfg)).status,200);
  const availability=async()=>await (await request(f,`/availability?service=single&date=${date}`)).json() as {slots:string[]};
  assert.deepEqual((await availability()).slots,[]);
@@ -398,7 +398,7 @@ test('customers see the service end while occupancy reserves at least thirty min
   assert.equal((await bookings())[0].end,db.service_end);
   const customerText=JSON.stringify(await (await request(f,'/bookings','customer')).json());assert.ok(!customerText.includes('owner-private note'));assert.ok(!customerText.includes('bufferMinutes'));
   assert.equal((await request(f,'/bookings','other','POST',{...p,time:'11:30'})).status,409);
-  for(const bufferMinutes of [0,29])assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,bufferMinutes})).status,400);
+  for(const bufferMinutes of [0,9])assert.equal((await request(f,'/admin/settings','owner','PUT',{...DEFAULT_SETTINGS,bufferMinutes})).status,400);
   const cfg=JSON.parse(String(f.db.prepare('SELECT data FROM settings WHERE id=1').get()!.data));cfg.bufferMinutes=45;f.db.prepare('UPDATE settings SET data=?').run(JSON.stringify(cfg));
   assert.equal((await bookings())[0].end,db.service_end);
   const next=await request(f,'/bookings','other','POST',{...p,time:'12:00'});assert.equal(next.status,201);
@@ -412,7 +412,7 @@ test('customers see the service end while occupancy reserves at least thirty min
 test('service-end migration retains exceptional arrangements and occupied intervals without modifying status, price or version',()=>{
  const db=new DatabaseSync(':memory:');try{
   db.exec(readFileSync(new URL('../migrations/0001_schema.sql',import.meta.url),'utf8'));
-  db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS}));
+  db.prepare('INSERT INTO settings VALUES(1,?)').run(JSON.stringify({...DEFAULT_SETTINGS,bufferMinutes:30}));
   const oldDescription='一次完成眉眼的美好。服務 4.5 小時，另保留 30 分鐘整理；可選擇睫毛款式與根數。';
   const service=SERVICES.find(s=>s.category==='combo')!;db.prepare('INSERT INTO services VALUES(?,?)').run(service.id,JSON.stringify({...service,description:oldDescription}));
   const date=offsetDate(taipeiDay(),10),start=taipeiMs(date,'16:30'),end=taipeiMs(date,'20:30');
@@ -553,7 +553,7 @@ test('accepting a proposal rechecks open hours and a safe LINE login return pres
 test('quarter-hour migration preserves bookings and settings, and API creates valid fifteen-minute starts only',async()=>{
  const f=fixture();try{
   const original=await booked(f),before=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(original.id);
-  const saved={...DEFAULT_SETTINGS,stepMinutes:30,address:'測試店址',leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))};
+  const saved={...DEFAULT_SETTINGS,bufferMinutes:30,stepMinutes:30,address:'測試店址',leadHours:0,weekly:Object.fromEntries(Array.from({length:7},(_,i)=>[i,[['10:00','18:00']]]))};
   f.db.prepare('UPDATE settings SET data=? WHERE id=1').run(JSON.stringify(saved));
   f.db.exec(readFileSync(new URL('../migrations/0010_quarter_hour_starts.sql',import.meta.url),'utf8'));
   assert.deepEqual(JSON.parse(String(f.db.prepare('SELECT data FROM settings').get()!.data)),{...saved,stepMinutes:15});
@@ -598,5 +598,53 @@ test('combo root-duration migration preserves saved prices, standalone services 
   const created=await request(f,'/bookings','other','POST',{...payload(),serviceId:legacy.id,date});assert.equal(created.status,201);const row=f.db.prepare('SELECT start,service_end,end FROM bookings WHERE user_id=?').get('other')!;assert.equal(Number(row.service_end)-Number(row.start),240*60000);assert.equal(Number(row.end)-Number(row.service_end),30*60000);
   const unchanged=f.db.prepare('SELECT * FROM services WHERE id=?').get(legacy.id);f.db.exec(migration);assert.deepEqual(f.db.prepare('SELECT * FROM services WHERE id=?').get(legacy.id),unchanged);
   f.db.prepare("UPDATE services SET data=json_set(data,'$.description','店家自訂組合說明') WHERE id=?").run(legacy.id);f.db.exec(migration);assert.equal(JSON.parse(String(f.db.prepare('SELECT data FROM services WHERE id=?').get(legacy.id)!.data)).description,'店家自訂組合說明');
+ }finally{f.db.close()}
+});
+
+test('future confirmed appointments only allow cancellation or a proposal; completion works on the service date',async()=>{
+ const f=fixture();try{
+  const {id}=await booked(f),before=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;
+  for(const status of ['completed','no_show','confirmed']){
+   const denied=await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:before.version,status,price:1000,paid:true,paidAmount:1000});assert.equal(denied.status,409);assert.match((await denied.json() as {error:string}).error,/日期尚未到/);
+   assert.deepEqual(f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id),before);
+  }
+  const c=await proposed(f,id);assert.equal(c.state,'pending');
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:before.version,status:'cancelled',price:900,paid:true,paidAmount:900})).status,200);
+  const today=taipeiDay(),start=taipeiMs(today,'10:00');f.db.prepare("UPDATE bookings SET date=?,start=?,service_end=?,end=?,status='confirmed',version=version+1 WHERE id=?").run(today,start,start+90*60000,start+120*60000,id);
+  const current=f.db.prepare('SELECT version FROM bookings WHERE id=?').get(id)!;
+  assert.equal((await request(f,'/admin/bookings/'+id,'owner','PATCH',{version:current.version,status:'completed',price:900,paid:true,paidAmount:900})).status,200);
+ }finally{f.db.close()}
+});
+
+test('ten-minute migration preserves service snapshots and proposal history, updates future occupancy and prevents future completion',async()=>{
+ const f=fixture();try{
+  const {id}=await booked(f),c=await proposed(f,id),before=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;
+  const historyDate=offsetDate(taipeiDay(),-2),historyStart=taipeiMs(historyDate,'10:00');
+  f.db.prepare("INSERT INTO bookings(id,customer,phone,service_id,service_name,spec,addons,date,start,service_end,end,price,status,created_at,updated_at,version) VALUES('history','測試歷史','0900000000','single','日式單根','100 根','{}',?,?,?,?,900,'completed',1,1,1)").run(historyDate,historyStart,historyStart+90*60000,historyStart+120*60000);
+  const history=f.db.prepare("SELECT * FROM bookings WHERE id='history'").get();
+  f.db.exec(readFileSync(new URL('../migrations/0012_ten_minute_cleanup.sql',import.meta.url),'utf8'));
+  const after=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;
+  for(const key of ['start','service_end','date','price','paid','paid_amount','status','user_id'])assert.equal(after[key],before[key]);
+  assert.equal(after.end,Number(after.service_end)+10*60000);assert.equal(after.version,Number(before.version)+1);
+  assert.deepEqual(f.db.prepare("SELECT * FROM bookings WHERE id='history'").get(),history);
+  const hold=f.db.prepare('SELECT * FROM booking_changes WHERE id=?').get(c.id)!;assert.equal(hold.state,'pending');assert.equal(hold.base_version,after.version);assert.equal(hold.end,Number(hold.service_end)+10*60000);
+  assert.throws(()=>f.db.prepare("UPDATE bookings SET status='completed' WHERE id=?").run(id),/FUTURE_BOOKING/);
+  assert.equal((await request(f,'/changes/'+c.id+'/respond','customer','POST',{decision:'accept'})).status,200);
+  const moved=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;assert.equal(Number(moved.end)-Number(moved.service_end),10*60000);assert.equal(moved.price,before.price);assert.equal(moved.paid,before.paid);
+  assert.equal(f.db.prepare('SELECT state FROM booking_changes WHERE id=?').get(c.id)!.state,'accepted');
+ }finally{f.db.close()}
+});
+
+test('new bookings and proposals reserve ten-minute cleanup, protect overlaps and accept the new settings minimum',async()=>{
+ const f=fixture();try{
+  f.db.exec(readFileSync(new URL('../migrations/0012_ten_minute_cleanup.sql',import.meta.url),'utf8'));
+  const first=await request(f,'/bookings','customer','POST',payload());assert.equal(first.status,201);const {id}=await first.json() as {id:string};
+  const b=f.db.prepare('SELECT * FROM bookings WHERE id=?').get(id)!;assert.equal(Number(b.end)-Number(b.service_end),10*60000);
+  assert.equal((await request(f,'/bookings','other','POST',{...payload(),time:'11:30'})).status,409);
+  assert.equal((await request(f,'/bookings','other','POST',{...payload(),time:'11:45'})).status,201);
+  const c=await proposed(f,id,1,{time:'14:00',duration:100});const hold=f.db.prepare('SELECT end,service_end FROM booking_changes WHERE id=?').get(c.id)!;assert.equal(Number(hold.end)-Number(hold.service_end),10*60000);
+  const cfg=JSON.parse(String(f.db.prepare('SELECT data FROM settings WHERE id=1').get()!.data));
+  assert.equal((await request(f,'/admin/settings','owner','PUT',{...cfg,bufferMinutes:10})).status,200);
+  assert.equal((await request(f,'/admin/settings','owner','PUT',{...cfg,bufferMinutes:9})).status,400);
  }finally{f.db.close()}
 });

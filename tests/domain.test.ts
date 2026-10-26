@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {availableSlots,DEFAULT_SETTINGS,SERVICES,serviceDuration,formatDuration,priceFor,taipeiMs,overlaps,taipeiDay,withinCalendarMonths} from '../src/domain.ts';
 const now=Date.parse('2026-10-07T00:00:00+08:00');
 test('a full service and cleanup must fit inside an open window',()=>{
- const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  const slots=availableSlots('2026-10-08',120,cfg,[['10:00','18:00']],[],now);
  assert.equal(slots[0],'10:00');assert.equal(slots.at(-1),'15:30');assert.ok(!slots.includes('16:00'));
 });
 test('pending appointments and lunch breaks remove all overlapping starts',()=>{
- const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  const slots=availableSlots('2026-10-08',90,cfg,[['10:00','12:00'],['13:00','18:00']],[{start:taipeiMs('2026-10-08','14:00'),end:taipeiMs('2026-10-08','15:45')}],now);
  assert.deepEqual(slots,['10:00','15:45','16:00']);
 });
@@ -37,7 +37,7 @@ test('three-month touchup uses calendar months, including month-end dates',()=>{
  assert.equal(withinCalendarMonths(before,taipeiMs('2026-04-30','12:01'),3),false);
 });
 test('owner supplied service ranges reserve their upper bound plus 30 minutes cleanup',()=>{
- const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  const source=SERVICES.find(s=>s.id==='single')!,service={...source,specs:source.specs.map(s=>({...s,duration:undefined}))};
  const duration=serviceDuration(service,{lower:false,removal:'none'},cfg)!;
  const slots=availableSlots('2026-10-08',duration,cfg,[['10:00','18:00']],[{start:taipeiMs('2026-10-08','10:00'),end:taipeiMs('2026-10-08','12:30')}],now);
@@ -50,7 +50,7 @@ test('owner supplied service ranges reserve their upper bound plus 30 minutes cl
  assert.deepEqual(availableSlots('2026-10-08',brows.duration!,cfg,[['10:00','13:30']],[],now),['10:00']);
 });
 test('combined brows and lashes follows root count and retains lash addon rules',()=>{
- const service=SERVICES.find(s=>s.id==='combo-brows-lashes')!,cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const service=SERVICES.find(s=>s.id==='combo-brows-lashes')!,cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  assert.equal(service.duration,240);assert.equal(service.specs.length,12);
  const spec=service.specs.findIndex(s=>s.label==='日式單根・150 根');
  assert.equal(priceFor(service,spec,{lower:false,removal:'none'}),6000);
@@ -60,10 +60,10 @@ test('combined brows and lashes follows root count and retains lash addon rules'
  assert.equal(serviceDuration(service,{lower:true,removal:'own'},cfg),300);
 });
 
-test('an outdated zero-buffer setting still requires thirty minutes before the next customer',()=>{
+test('an outdated zero-buffer setting still requires ten minutes before the next customer',()=>{
  const cfg={...DEFAULT_SETTINGS,leadHours:0,bufferMinutes:0};
  assert.deepEqual(availableSlots('2026-10-08',120,cfg,[['10:00','12:00']],[],now),[]);
- assert.deepEqual(availableSlots('2026-10-08',120,cfg,[['10:00','12:30']],[],now),['10:00']);
+ assert.deepEqual(availableSlots('2026-10-08',120,cfg,[['10:00','12:10']],[],now),['10:00']);
 });
 
 test('lash root counts choose service minutes independently of cleanup and addons, while the combo follows its own root-count rule',()=>{
@@ -75,14 +75,14 @@ test('lash root counts choose service minutes independently of cleanup and addon
   }
  }
  const combo=SERVICES.find(s=>s.category==='combo')!;assert.equal(serviceDuration(combo,{lower:false,removal:'none'},DEFAULT_SETTINGS,0),240);
- const single=SERVICES[0],cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const single=SERVICES[0],cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  assert.deepEqual(availableSlots('2026-10-08',serviceDuration(single,{lower:false,removal:'none'},cfg,1)!,cfg,[['10:00','12:00']],[],now),['10:00']);
  assert.deepEqual(availableSlots('2026-10-08',serviceDuration(single,{lower:false,removal:'none'},cfg,2)!,cfg,[['10:00','12:00']],[],now),[]);
 });
 
 
 test('quarter-hour starts align with clock minutes and preserve the full cleanup gap',()=>{
- const cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  assert.equal(cfg.stepMinutes,15);
  assert.deepEqual(availableSlots('2026-10-08',80,cfg,[['10:10','13:00']],[{start:taipeiMs('2026-10-08','10:00'),end:taipeiMs('2026-10-08','11:50')}],now),[]);
  assert.deepEqual(availableSlots('2026-10-08',80,cfg,[['10:10','13:00']],[],now),['10:15','10:30','10:45','11:00']);
@@ -91,7 +91,7 @@ test('quarter-hour starts align with clock minutes and preserve the full cleanup
 
 
 test('all combo styles use four hours at 100 roots and add ten minutes per fifty roots, with readable labels',()=>{
- const service=SERVICES.find(s=>s.id==='combo-brows-lashes')!,cfg={...DEFAULT_SETTINGS,leadHours:0};
+ const service=SERVICES.find(s=>s.id==='combo-brows-lashes')!,cfg={...DEFAULT_SETTINGS,bufferMinutes:30,leadHours:0};
  for(const [spec,item] of service.specs.entries()){
   const roots=Number(item.label.split('・')[1].replace(' 根','')),expected=240+(roots-100)/50*10;
   assert.equal(serviceDuration(service,{lower:false,removal:'none'},cfg,spec),expected);
@@ -99,4 +99,13 @@ test('all combo styles use four hours at 100 roots and add ten minutes per fifty
   assert.deepEqual(availableSlots('2026-10-08',expected,cfg,[['10:00','14:30']],[],now),roots===100?['10:00']:[]);
  }
  assert.equal(formatDuration(240),'4 小時');assert.equal(formatDuration(250),'4 小時 10 分鐘');assert.equal(formatDuration(260),'4 小時 20 分鐘');assert.equal(formatDuration(280),'4 小時 40 分鐘');
+});
+
+
+test('new default cleanup is ten minutes and existing longer settings remain valid',()=>{
+ const cfg={...DEFAULT_SETTINGS,leadHours:0};assert.equal(cfg.bufferMinutes,10);
+ assert.deepEqual(availableSlots('2026-10-08',90,cfg,[['10:00','11:40']],[],now),['10:00']);
+ assert.deepEqual(availableSlots('2026-10-08',90,{...cfg,bufferMinutes:30},[['10:00','11:40']],[],now),[]);
+ const occupied=[{start:taipeiMs('2026-10-08','10:00'),end:taipeiMs('2026-10-08','11:40')}];
+ assert.equal(availableSlots('2026-10-08',90,cfg,[['10:00','18:00']],occupied,now)[0],'11:45');
 });

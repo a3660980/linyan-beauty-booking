@@ -25,7 +25,7 @@ async function rateLimit(req:Request,env:Env){const ip=req.headers.get('cf-conne
 function validateWindows(value:unknown):[string,string][]{try{return normalizeWindows(value)}catch(e){fail((e as Error).message)}}
 function validateSettings(d:Record<string,unknown>):Settings{const w=d.weekly as Record<string,unknown>;if(!w)fail('請設定每週排班');const weekly:Settings['weekly']={};for(let i=0;i<7;i++)weekly[i]=validateWindows(w[i]);const ad=d.addonDurations as Record<string,unknown>;if(!ad)fail('缺少加購服務时间');const dur=(v:unknown)=>v===null?null:integer(v,0,360);return {
  address:text(d.address,300),instagram:text(d.instagram,300),lineUrl:text(d.lineUrl,300),policies:text(d.policies,3000),weekly,
- bookingDays:integer(d.bookingDays,1,90),leadHours:integer(d.leadHours,0,168),cancelHours:integer(d.cancelHours,0,168),approvalHours:integer(d.approvalHours,1,72),bufferMinutes:integer(d.bufferMinutes,30,120),stepMinutes:integer(d.stepMinutes,5,120),reminders:d.reminders===true,addonDurations:{lower:dur(ad.lower),own:dur(ad.own),other:dur(ad.other)}
+ bookingDays:integer(d.bookingDays,1,90),leadHours:integer(d.leadHours,0,168),cancelHours:integer(d.cancelHours,0,168),approvalHours:integer(d.approvalHours,1,72),bufferMinutes:integer(d.bufferMinutes,10,120),stepMinutes:integer(d.stepMinutes,5,120),reminders:d.reminders===true,addonDurations:{lower:dur(ad.lower),own:dur(ad.own),other:dur(ad.other)}
 };}
 function safeLink(value:string){return !value||/^https:\/\//.test(value)}
 async function authRoutes(req:Request,env:Env,path:string,origin:string):Promise<Response|null>{
@@ -157,6 +157,7 @@ async function api(req:Request,env:Env,ctx:ExecutionContext){
  const action=path.match(/^\/api\/admin\/bookings\/([^/]+)$/);if(action&&method==='PATCH'){
   const b=await env.DB.prepare('SELECT * FROM bookings WHERE id=?').bind(action[1]).first<Booking>();if(!b)fail('預約不存在',404);const d=await body(req);const version=integer(d.version,1,1000000);if(version!==b.version)fail('預約已被更新，請重新整理',409);
   const next=text(d.status,20,true);const allowed:Record<string,string[]>={pending:['confirmed','rejected','cancelled'],confirmed:['confirmed','completed','cancelled','no_show'],completed:['completed'],no_show:['no_show'],cancelled:['cancelled'],rejected:['rejected'],expired:['expired']};if(!allowed[b.status]?.includes(next))fail('不允許此狀態變更',409);if(b.status==='pending'&&b.expires_at!<=Date.now())fail('申請已失效，請客人重新預約',409);
+  if(b.status==='confirmed'&&b.date>taipeiDay()&&next!=='cancelled')fail('預約日期尚未到，目前只能取消或提出改期',409);
   const price=integer(d.price??b.price,0,100000),paid=d.paid===true?1:0;const paidAmount=paid?integer(d.paidAmount??price,0,100000):null;
   if(next==='confirmed'){
    const hold=await env.DB.prepare("SELECT id FROM booking_changes WHERE booking_id=? AND state='pending' AND expires_at>?").bind(b.id,Date.now()).first();
