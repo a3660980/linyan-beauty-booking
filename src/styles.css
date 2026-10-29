@@ -390,7 +390,7 @@ input[type=date]::-webkit-datetime-edit-fields-wrapper,input[type=time]::-webkit
 @media(max-width:600px){.booking-operation-card,.booking-review-modal .reschedule-panel{padding:18px 14px;margin-bottom:22px}.booking-operation-heading h3,.booking-review-modal .reschedule-panel h3{font-size:17px}.booking-operations .muted{font-size:12px}.booking-operation-button{min-height:52px!important;font-size:13px!important}.booking-operations .future-booking-note{font-size:12px;padding:14px}.booking-payment-summary>strong{font-size:21px}.booking-payment-summary .badge{margin-left:0}.booking-more-actions>summary{padding:16px 14px}.booking-more-body{padding:0 12px 16px}.booking-action-confirmation{padding:22px 14px}.booking-action-confirmation h3{font-size:21px}.booking-action-summary{padding:16px 12px;font-size:13px}.booking-action-confirm-buttons .button{min-height:52px;font-size:13px}.booking-action-ack{font-size:12px}}
 @media(prefers-reduced-motion:reduce){.booking-more-actions>summary>svg{transition:none}}
 
-/* The booking calendar shares availability with the week strip and stays inside the form. */
+/* The booking calendar shares availability with the week strip, using a popover or a phone sheet. */
 .booking-date-trigger{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;width:100%;padding:13px 15px;border:1px solid var(--line);border-radius:7px;background:#fffdfa;color:#4b3a32;font:inherit;text-align:left}
 .booking-date-trigger:focus-visible,.booking-month-calendar button:focus-visible{outline:2px solid var(--rose-dark);outline-offset:3px}
 .booking-date-trigger[aria-expanded=true]{border-color:var(--rose-dark);background:#f8f0e9}
@@ -399,7 +399,7 @@ input[type=date]::-webkit-datetime-edit-fields-wrapper,input[type=time]::-webkit
 .booking-date-field .booking-date-trigger>span{margin:0;font-size:15px}
 .booking-date-actions{display:grid;grid-template-columns:minmax(0,240px) minmax(0,1fr);align-items:end;gap:16px}
 .booking-date-actions>.nearest-date{justify-self:start}
-.booking-month-calendar{flex:0 0 100%;grid-column:1/-1;width:100%;min-width:0;max-width:420px;padding:16px;border:1px solid #e2d4c7;border-radius:12px;background:#fffcf8;box-shadow:0 8px 24px #8066570a;margin-top:4px}
+.booking-month-calendar{position:fixed;inset:auto;margin:0;width:380px;min-width:0;max-width:calc(100vw - 32px);max-height:calc(100dvh - 32px);overflow:auto;overscroll-behavior:contain;padding:16px;border:1px solid #e2d4c7;border-radius:14px;background:#fffcf8;color:#4b3a32;box-shadow:0 16px 48px #4b3a3233;scrollbar-gutter:stable}
 .booking-month-heading{display:grid;grid-template-columns:44px minmax(0,1fr) 44px;align-items:center;gap:8px;margin-bottom:12px}
 .booking-month-heading>strong{text-align:center;font-size:17px;font-weight:500;color:var(--rose-dark)}
 .booking-month-heading>.icon-button{width:44px;height:44px;border:1px solid var(--line);border-radius:50%}
@@ -419,3 +419,15 @@ input[type=date]::-webkit-datetime-edit-fields-wrapper,input[type=time]::-webkit
 .booking-month-hint{font-size:11px;color:var(--muted);line-height:1.7;margin:10px 0 4px}
 .booking-month-close{min-height:44px;font-size:12px}
 @media(max-width:600px){.booking-date-actions{grid-template-columns:minmax(0,1fr);align-items:start;gap:12px}.booking-month-calendar{padding:12px;max-width:100%}.booking-month-days,.booking-month-weekdays{gap:3px}.booking-month-days>button{min-height:44px;font-size:14px}.booking-date-field .booking-date-trigger>span{font-size:16px}}
+
+.booking-month-calendar::backdrop{background:transparent}
+.booking-month-title{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.booking-month-title h2{font-size:18px;letter-spacing:1px;line-height:1.5;margin:0;color:var(--rose-dark)}
+.booking-month-title>.icon-button{min-width:44px;min-height:44px;flex-shrink:0}
+@media(max-width:600px){
+ .booking-month-calendar{left:0;right:0;top:auto;bottom:0;width:100%;max-width:none;max-height:calc(100dvh - 16px);padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-radius:22px 22px 0 0;border-bottom:0;scrollbar-gutter:auto}
+ .booking-month-calendar::backdrop{background:#32241c66}
+ .booking-month-title{position:sticky;top:-12px;background:#fffcf8;z-index:1;padding:8px 0;margin-top:-4px}
+ .booking-month-title::before{content:'';position:absolute;top:0;left:calc(50% - 18px);width:36px;height:4px;border-radius:4px;background:#d8c8ba}
+ .booking-month-close{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;border:1px solid var(--line);border-radius:24px;margin-top:12px}
+}

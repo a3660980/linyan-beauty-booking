@@ -3,7 +3,7 @@ import {taipeiDay,weekday,SERVICES,DEFAULT_SETTINGS,bookingDates,weekDates} from
 const futureDay=()=>{const date=taipeiDay(Date.now()+4*86400000);return weekday(date)===3?taipeiDay(Date.now()+5*86400000):date};
 async function chooseBookingDate(page:Page,date:string){
  await page.getByRole('button',{name:'預約日期',exact:true}).click();
- const calendar=page.getByRole('group',{name:'選擇預約日期',exact:true});
+ const calendar=page.getByRole('dialog',{name:'選擇預約日期',exact:true});
  for(let i=0;i<12;i++){const month=await calendar.getAttribute('data-month');if(month===date.slice(0,7))break;await calendar.getByRole('button',{name:month!<date.slice(0,7)?'下個月':'上個月',exact:true}).click()}
  await calendar.locator(`[data-date="${date}"]`).click();
 }
@@ -114,7 +114,7 @@ test('booking opens on the nearest date, follows week navigation and preserves a
  await inspectBookingDate(page,dates[0]);await expect(page.getByRole('button',{name:'上一週',exact:true})).toBeDisabled();
  await page.getByRole('button',{name:'上一步',exact:true}).click();await page.getByRole('checkbox',{name:/下睫毛/}).check();
  await page.getByRole('button',{name:'選擇日期',exact:true}).click();await expect(selected).toHaveAttribute('data-date','2026-11-04');await expectWeek('2026-11-04');
- await selected.click();const month=page.getByRole('group',{name:'選擇預約日期',exact:true});await expect(month.locator('[data-date="2026-11-02"]')).toBeDisabled();await expect(month.locator('[data-date="2026-11-04"]')).toBeEnabled();
+ await selected.click();const month=page.getByRole('dialog',{name:'選擇預約日期',exact:true});await expect(month.locator('[data-date="2026-11-02"]')).toBeDisabled();await expect(month.locator('[data-date="2026-11-04"]')).toBeEnabled();
 });
 
 test('a fully closed booking horizon shows no dates instead of selecting an unavailable day',async({page})=>{
@@ -581,9 +581,21 @@ test('custom booking month calendar marks availability across years, keeps the w
  await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
  let release:()=>void=()=>{};const pending=new Promise<void>(resolve=>{release=resolve});await page.route('**/api/availability/dates?*',async r=>{await pending;await r.fulfill({json:{days:dates.map(date=>({date,slots:open.includes(date)?['10:00']:[]})),firstAvailableDate:open[0],duration:80}})});
  await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();const trigger=page.getByRole('button',{name:'預約日期',exact:true});await expect(trigger).toBeDisabled();release();await expect(trigger).toHaveAttribute('data-date',open[0]);await trigger.click();
- const calendar=page.getByRole('group',{name:'選擇預約日期',exact:true});await expect(page.locator('.booking-date-picker input[type=date]')).toHaveCount(0);await expect(calendar).toContainText('2026 年 12 月');await expect(calendar.getByRole('button',{name:'上個月',exact:true})).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-30"]')).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-31"]')).toHaveClass(/available is-chosen/);await expect(calendar.locator('[data-date="2026-12-31"]')).toBeFocused();
+ const calendar=page.getByRole('dialog',{name:'選擇預約日期',exact:true});await expect(page.locator('.booking-date-picker input[type=date]')).toHaveCount(0);await expect(calendar).toContainText('2026 年 12 月');await expect(calendar.getByRole('button',{name:'上個月',exact:true})).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-30"]')).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-31"]')).toHaveClass(/available is-chosen/);await expect(calendar.locator('[data-date="2026-12-31"]')).toBeFocused();
  await calendar.getByRole('button',{name:'下個月',exact:true}).click();await expect(calendar).toContainText('2027 年 1 月');await expect(calendar.getByRole('button',{name:'下個月',exact:true})).toBeDisabled();await expect(calendar.locator('[data-date="2027-01-07"]')).toBeEnabled();await expect(calendar.locator('[data-date="2027-01-08"]')).toBeDisabled();await expect(calendar.locator('[data-date="2027-01-27"]')).toBeDisabled();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await calendar.locator('[data-date="2027-01-07"]').click();await expect(calendar).toHaveCount(0);await expect(trigger).toHaveAttribute('data-date',open[1]);await expect(trigger).toBeFocused();expect(await page.locator('.date-strip button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-date')))).toEqual(weekDates(open[1]));await expect(page.locator('.date-strip [data-date="2027-01-07"]')).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('button',{name:'10:00',exact:true})).toBeVisible();
  await trigger.click();await page.keyboard.press('Escape');await expect(calendar).toHaveCount(0);await expect(trigger).toBeFocused();
- await page.setViewportSize({width:1280,height:900});await trigger.click();const triggerBounds=await trigger.boundingBox(),calendarBounds=await calendar.boundingBox();expect(triggerBounds!.width).toBeGreaterThan(200);expect(calendarBounds!.y).toBeGreaterThanOrEqual(triggerBounds!.y+triggerBounds!.height);
+ await page.setViewportSize({width:1280,height:900});await trigger.click();const triggerBounds=await trigger.boundingBox(),calendarBounds=await calendar.boundingBox();expect(triggerBounds!.width).toBeGreaterThan(200);expect(calendarBounds!.x).toBeGreaterThanOrEqual(16);expect(calendarBounds!.y).toBeGreaterThanOrEqual(16);expect(calendarBounds!.y+calendarBounds!.height).toBeLessThanOrEqual(884);
+});
+
+test('booking calendar floats on desktop and opens as a dismissible phone sheet without moving the form',async({page})=>{
+ const now=Date.parse('2026-11-01T04:00:00Z');await page.clock.setFixedTime(now);const dates=bookingDates(30,now);
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));await page.route('**/api/availability/dates?*',r=>r.fulfill({json:{days:dates.map(date=>({date,slots:['2026-11-02','2026-11-05'].includes(date)?['10:00']:[]})),firstAvailableDate:'2026-11-02',duration:80}}));
+ for(const width of [1280,390]){
+  await page.setViewportSize({width,height:844});await page.goto('/#home');await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();const trigger=page.getByRole('button',{name:'預約日期',exact:true});await expect(trigger).toBeEnabled();await trigger.evaluate(n=>n.scrollIntoView({block:'center'}));
+  const before=await page.locator('.time-grid').boundingBox(),scroll=await page.evaluate(()=>scrollY);await trigger.click();const calendar=page.getByRole('dialog',{name:'選擇預約日期',exact:true});await expect(calendar).toHaveAttribute('open','');await expect(page.locator('body')).toHaveCSS('position','fixed');const after=await page.locator('.time-grid').boundingBox();expect(Math.abs(after!.y-before!.y)).toBeLessThan(2);
+  const box=await calendar.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(width);if(width<=600){expect(Math.abs(box!.y+box!.height-844)).toBeLessThan(2)}else{expect(box!.width).toBeLessThan(420)}
+  await calendar.getByRole('button',{name:'收起月曆',exact:true}).focus();await page.keyboard.press('Tab');await expect(calendar.getByRole('button',{name:'關閉月曆',exact:true})).toBeFocused();await calendar.getByRole('button',{name:'關閉月曆',exact:true}).click();await expect(calendar).toHaveCount(0);await expect(trigger).toBeFocused();expect(Math.abs((await page.evaluate(()=>scrollY))-scroll)).toBeLessThan(2);
+  await trigger.click();await page.mouse.click(8,8);await expect(calendar).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await calendar.locator('[data-date="2026-11-05"]').click();await expect(calendar).toHaveCount(0);await expect(trigger).toHaveAttribute('data-date','2026-11-05');await expect(page.locator('body')).not.toHaveCSS('position','fixed');
+ }
 });
