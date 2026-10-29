@@ -1,12 +1,22 @@
-import {test,expect} from '@playwright/test';
+import {test,expect,type Page} from '@playwright/test';
 import {taipeiDay,weekday,SERVICES,DEFAULT_SETTINGS,bookingDates,weekDates} from '../src/domain';
 const futureDay=()=>{const date=taipeiDay(Date.now()+4*86400000);return weekday(date)===3?taipeiDay(Date.now()+5*86400000):date};
+async function chooseBookingDate(page:Page,date:string){
+ await page.getByRole('button',{name:'預約日期',exact:true}).click();
+ const calendar=page.getByRole('group',{name:'選擇預約日期',exact:true});
+ for(let i=0;i<12;i++){const month=await calendar.getAttribute('data-month');if(month===date.slice(0,7))break;await calendar.getByRole('button',{name:month!<date.slice(0,7)?'下個月':'上個月',exact:true}).click()}
+ await calendar.locator(`[data-date="${date}"]`).click();
+}
+async function inspectBookingDate(page:Page,date:string){
+ for(let i=0;i<12;i++){const days=await page.locator('.date-strip button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-date')!));if(days.includes(date))break;await page.getByRole('button',{name:date<days[0]?'上一週':'下一週',exact:true}).click()}
+ await page.locator(`.date-strip [data-date="${date}"]`).click();
+}
 test.beforeEach(async({page})=>{await page.route('**/api/**',r=>r.fulfill({status:503,contentType:'application/json',body:'{"error":"測試環境未連線"}'}))});
 test('demo booking keeps selected time through submission and owner approval',async({page})=>{
  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto('/#demo-booking');
  await page.getByRole('button',{name:'選擇日期',exact:true}).click();
- await page.getByLabel('預約日期',{exact:true}).fill(futureDay());
+ await chooseBookingDate(page,futureDay());
  await page.getByRole('button',{name:'14:00',exact:true}).click();
  await page.getByRole('button',{name:'填寫資料',exact:true}).click();
  await page.getByLabel('姓名 *').fill('示範測試客人');await page.getByLabel('聯絡電話 *').fill('0900000000');
@@ -57,7 +67,7 @@ test('mobile calendar split schedules update customer slots and can be closed or
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  await dialog.getByRole('button',{name:'儲存當日排班'}).click();await expect(dialog).toHaveCount(0);
  await expect(cell).toContainText('10:00–12:00');await expect(cell).toContainText('15:00–18:00');
- const customerSlots=async()=>{await page.evaluate(()=>location.hash='demo-booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();await page.getByLabel('預約日期',{exact:true}).fill(date)};
+ const customerSlots=async()=>{await page.evaluate(()=>location.hash='demo-booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();await inspectBookingDate(page,date)};
  const edit=async()=>{await page.evaluate(()=>location.hash='demo-admin');await page.getByRole('button',{name:'行事曆',exact:true}).click();await page.getByLabel('行事曆日期').fill(date);await page.getByRole('button',{name:`設定 ${date} 的可預約時間`}).click()};
  await customerSlots();await expect(page.locator('.time-grid button')).toHaveText(['10:00','10:15','10:30','15:00','15:15','15:30','15:45','16:00','16:15','16:30']);
  await edit();await dialog.getByRole('checkbox',{name:'全天休息'}).check();await dialog.getByRole('button',{name:'儲存當日排班'}).click();
@@ -91,19 +101,20 @@ test('booking opens on the nearest date, follows week navigation and preserves a
   r.fulfill({json:{days:dates.map(date=>({date,slots:(lower?[first,'2026-11-06']:[first,'2026-11-02','2026-11-06']).includes(date)?['10:00','11:00']:[]})),firstAvailableDate:first,duration:lower?150:120}});
  });
  await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();
- const selected=page.getByLabel('預約日期',{exact:true});
+ const selected=page.getByRole('button',{name:'預約日期',exact:true});
  const expectWeek=async(date:string)=>{expect(await page.locator('.date-strip button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-date')))).toEqual(weekDates(date));await expect(page.locator(`.date-strip [data-date="${date}"]`)).toHaveAttribute('aria-pressed','true')};
- await expect(selected).toHaveValue('2026-10-30');await expectWeek('2026-10-30');
- await page.getByRole('button',{name:'下一週',exact:true}).click();await expect(selected).toHaveValue('2026-11-06');await expectWeek('2026-11-06');
- await page.getByRole('button',{name:'上一週',exact:true}).click();await expect(selected).toHaveValue('2026-10-30');
- await selected.fill('2026-11-02');await expectWeek('2026-11-02');
+ await expect(selected).toHaveAttribute('data-date','2026-10-30');await expectWeek('2026-10-30');
+ await page.getByRole('button',{name:'下一週',exact:true}).click();await expect(selected).toHaveAttribute('data-date','2026-11-06');await expectWeek('2026-11-06');
+ await page.getByRole('button',{name:'上一週',exact:true}).click();await expect(selected).toHaveAttribute('data-date','2026-10-30');
+ await chooseBookingDate(page,'2026-11-02');await expectWeek('2026-11-02');
  await page.getByRole('button',{name:'11:00',exact:true}).click();await page.getByRole('button',{name:'填寫資料',exact:true}).click();
- await page.getByRole('button',{name:'上一步',exact:true}).click();await expect(selected).toHaveValue('2026-11-02');await expect(page.getByRole('button',{name:'11:00',exact:true})).toHaveClass('selected');
- await page.getByRole('button',{name:'最近可預約日'}).click();await expect(selected).toHaveValue('2026-10-30');await expectWeek('2026-10-30');
- await selected.fill(dates.at(-1)!);await expect(page.getByRole('button',{name:'下一週',exact:true})).toBeDisabled();
- await selected.fill(dates[0]);await expect(page.getByRole('button',{name:'上一週',exact:true})).toBeDisabled();
+ await page.getByRole('button',{name:'上一步',exact:true}).click();await expect(selected).toHaveAttribute('data-date','2026-11-02');await expect(page.getByRole('button',{name:'11:00',exact:true})).toHaveClass('selected');
+ await page.getByRole('button',{name:'最近可預約日'}).click();await expect(selected).toHaveAttribute('data-date','2026-10-30');await expectWeek('2026-10-30');
+ await inspectBookingDate(page,dates.at(-1)!);await expect(page.getByRole('button',{name:'下一週',exact:true})).toBeDisabled();
+ await inspectBookingDate(page,dates[0]);await expect(page.getByRole('button',{name:'上一週',exact:true})).toBeDisabled();
  await page.getByRole('button',{name:'上一步',exact:true}).click();await page.getByRole('checkbox',{name:/下睫毛/}).check();
- await page.getByRole('button',{name:'選擇日期',exact:true}).click();await expect(selected).toHaveValue('2026-11-04');await expectWeek('2026-11-04');
+ await page.getByRole('button',{name:'選擇日期',exact:true}).click();await expect(selected).toHaveAttribute('data-date','2026-11-04');await expectWeek('2026-11-04');
+ await selected.click();const month=page.getByRole('group',{name:'選擇預約日期',exact:true});await expect(month.locator('[data-date="2026-11-02"]')).toBeDisabled();await expect(month.locator('[data-date="2026-11-04"]')).toBeEnabled();
 });
 
 test('a fully closed booking horizon shows no dates instead of selecting an unavailable day',async({page})=>{
@@ -563,4 +574,16 @@ test('future booking actions follow the server date even when the phone clock is
  const date='2026-11-22',today='2026-10-26',booking={...bookingFixture,date,status:'confirmed'};
  await page.addInitScript(()=>{Date.now=()=>Date.parse('2030-12-31T12:00:00+08:00')});await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:{id:'owner',name:'測試店家',friend:true,admin:true}}}));await page.route('**/api/admin',r=>r.fulfill({json:{...adminFixture,today,bookings:[booking]}}));await page.route('**/api/admin/bookings/test-booking/changes',r=>r.fulfill({json:{changes:[]}}));
  await page.goto('/#admin');await page.getByRole('button',{name:'已確認',exact:true}).click();await page.getByRole('button',{name:'查看／更新',exact:true}).click();const modal=page.getByRole('dialog');await expect(modal.getByRole('button',{name:'標記服務完成'})).toHaveCount(0);await expect(modal.getByRole('button',{name:'儲存收款'})).toHaveCount(0);await expect(modal.locator('.future-booking-note')).toContainText('預約日期尚未到');
+});
+
+test('custom booking month calendar marks availability across years, keeps the week in sync and fits a narrow phone',async({page})=>{
+ await page.setViewportSize({width:320,height:780});const now=Date.parse('2026-12-28T04:00:00Z');await page.clock.setFixedTime(now);const dates=bookingDates(30,now),open=['2026-12-31','2027-01-07'];
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:DEFAULT_SETTINGS,lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
+ let release:()=>void=()=>{};const pending=new Promise<void>(resolve=>{release=resolve});await page.route('**/api/availability/dates?*',async r=>{await pending;await r.fulfill({json:{days:dates.map(date=>({date,slots:open.includes(date)?['10:00']:[]})),firstAvailableDate:open[0],duration:80}})});
+ await page.goto('/#booking');await page.getByRole('button',{name:'選擇日期',exact:true}).click();const trigger=page.getByRole('button',{name:'預約日期',exact:true});await expect(trigger).toBeDisabled();release();await expect(trigger).toHaveAttribute('data-date',open[0]);await trigger.click();
+ const calendar=page.getByRole('group',{name:'選擇預約日期',exact:true});await expect(page.locator('.booking-date-picker input[type=date]')).toHaveCount(0);await expect(calendar).toContainText('2026 年 12 月');await expect(calendar.getByRole('button',{name:'上個月',exact:true})).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-30"]')).toBeDisabled();await expect(calendar.locator('[data-date="2026-12-31"]')).toHaveClass(/available is-chosen/);await expect(calendar.locator('[data-date="2026-12-31"]')).toBeFocused();
+ await calendar.getByRole('button',{name:'下個月',exact:true}).click();await expect(calendar).toContainText('2027 年 1 月');await expect(calendar.getByRole('button',{name:'下個月',exact:true})).toBeDisabled();await expect(calendar.locator('[data-date="2027-01-07"]')).toBeEnabled();await expect(calendar.locator('[data-date="2027-01-08"]')).toBeDisabled();await expect(calendar.locator('[data-date="2027-01-27"]')).toBeDisabled();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ await calendar.locator('[data-date="2027-01-07"]').click();await expect(calendar).toHaveCount(0);await expect(trigger).toHaveAttribute('data-date',open[1]);await expect(trigger).toBeFocused();expect(await page.locator('.date-strip button').evaluateAll(nodes=>nodes.map(n=>n.getAttribute('data-date')))).toEqual(weekDates(open[1]));await expect(page.locator('.date-strip [data-date="2027-01-07"]')).toHaveAttribute('aria-pressed','true');await expect(page.getByRole('button',{name:'10:00',exact:true})).toBeVisible();
+ await trigger.click();await page.keyboard.press('Escape');await expect(calendar).toHaveCount(0);await expect(trigger).toBeFocused();
+ await page.setViewportSize({width:1280,height:900});await trigger.click();const triggerBounds=await trigger.boundingBox(),calendarBounds=await calendar.boundingBox();expect(triggerBounds!.width).toBeGreaterThan(200);expect(calendarBounds!.y).toBeGreaterThanOrEqual(triggerBounds!.y+triggerBounds!.height);
 });
