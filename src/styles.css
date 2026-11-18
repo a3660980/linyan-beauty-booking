@@ -431,3 +431,40 @@ input[type=date]::-webkit-datetime-edit-fields-wrapper,input[type=time]::-webkit
  .booking-month-title::before{content:'';position:absolute;top:0;left:calc(50% - 18px);width:36px;height:4px;border-radius:4px;background:#d8c8ba}
  .booking-month-close{display:flex;align-items:center;justify-content:center;width:100%;min-height:48px;border:1px solid var(--line);border-radius:24px;margin-top:12px}
 }
+
+/* Studio directions and a responsive schematic based on the owner-provided location card. */
+.studio-location-page{padding-bottom:90px}
+.studio-location-layout{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.3fr);gap:26px;align-items:stretch}
+.studio-location-card{padding:36px;border:1px solid #e2d3c4;border-radius:20px;background:linear-gradient(145deg,#faf3e9,#f0e3d9);min-width:0}
+.studio-location-pin{display:inline-flex;padding:14px;border-radius:50%;background:#fffaf5;color:var(--rose-dark);margin-bottom:26px}
+.studio-location-card h2{font-size:32px;letter-spacing:5px;margin:16px 0 8px}
+.studio-location-caption{font-family:var(--serif);margin-bottom:30px}
+.studio-address{padding:22px 0;border-top:1px solid #dbcabd;border-bottom:1px solid #dbcabd;margin-bottom:24px}
+.studio-address>span{font-size:11px;color:var(--muted);letter-spacing:2px}
+.studio-address address{font-style:normal;font-size:20px;line-height:1.9;margin-top:10px;overflow-wrap:anywhere;user-select:text}
+.studio-location-actions{display:grid;gap:12px}
+.studio-location-actions .button{padding:14px 16px;font-size:13px;gap:10px;min-height:50px}
+.studio-navigation-note{display:flex;align-items:flex-start;gap:10px;margin-top:26px;color:var(--rose-dark)}
+.studio-navigation-note>svg{flex-shrink:0;margin-top:3px}
+.studio-navigation-note strong{font-size:13px;font-weight:500;line-height:1.8}
+.studio-navigation-note p{font-size:12px;line-height:1.9;margin:6px 0 0}
+.studio-copy-error{font-size:12px;margin:12px 0 0}
+.studio-location-map{min-width:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:20px;background:#fffdfa;overflow:hidden}
+.studio-map-heading{display:flex;gap:9px;align-items:center;padding:20px 22px;color:var(--rose-dark);flex-wrap:wrap}
+.studio-map-heading strong{font-size:13px;font-weight:500}
+.studio-map-heading .text-link{font-size:11px;margin-left:auto;min-height:28px}
+.studio-map-frame{position:relative;flex:1;display:flex;align-items:center;justify-content:center;min-height:440px;background:#f2e6d9;overflow:hidden}
+.studio-map-frame:focus-visible{outline:3px solid var(--rose-dark);outline-offset:-5px}
+.studio-schematic{display:block;width:100%;height:auto;max-height:640px;font-family:Arial,'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif}
+.studio-map-caption{padding:16px 22px;font-size:11px;line-height:1.8;margin:0}
+.studio-location-bottom{display:grid;grid-template-columns:1fr 1fr;gap:26px;margin-top:28px}
+.studio-landmarks,.studio-arrival{padding:30px;border:1px solid var(--line);border-radius:16px;background:#fffdfa;min-width:0}
+.studio-landmarks h2,.studio-arrival h2{display:flex;align-items:center;gap:10px;font-size:23px;letter-spacing:1px;margin:18px 0}
+.studio-landmark-tags{display:flex;flex-wrap:wrap;gap:9px;margin:22px 0}
+.studio-landmark-tags span{font-size:12px;padding:10px 13px;border-radius:30px;background:#f3ece3;color:#806657}
+.studio-landmarks p,.studio-arrival p{font-size:13px;margin-bottom:0}
+.studio-arrival>svg{color:var(--rose-dark)}
+.studio-arrival .social-links{margin:20px 0}
+.studio-arrival>.text-link{font-size:13px;min-height:44px}
+@media(min-width:901px) and (max-width:1100px){.nav{gap:16px}.header-inner>.brand>span{font-size:28px}}
+@media(max-width:760px){.studio-location-layout,.studio-location-bottom{grid-template-columns:minmax(0,1fr);gap:20px}.studio-location-card{padding:28px 24px}.studio-location-page .page-title{margin-bottom:32px}.studio-address address{font-size:19px}.studio-map-frame{min-height:360px}.studio-landmarks,.studio-arrival{padding:26px 22px}.studio-map-heading{padding:18px}.studio-map-caption{padding:14px 18px}.studio-location-bottom{margin-top:20px}}

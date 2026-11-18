@@ -599,3 +599,12 @@ test('booking calendar floats on desktop and opens as a dismissible phone sheet 
   await trigger.click();await page.mouse.click(8,8);await expect(calendar).toHaveCount(0);await expect(trigger).toBeFocused();await trigger.click();await calendar.locator('[data-date="2026-11-05"]').click();await expect(calendar).toHaveCount(0);await expect(trigger).toHaveAttribute('data-date','2026-11-05');await expect(page.locator('body')).not.toHaveCSS('position','fixed');
  }
 });
+
+test('studio location is reachable from the menu, shows a readable schematic and directions, and fits small screens',async({page})=>{
+ const address='63044 雲林縣斗南鎮西岐里文化街14號',mapUrl='https://maps.app.goo.gl/AszXJuSH4ehnw9Jq7?g_st=ic';
+ await page.route('**/api/public',r=>r.fulfill({json:{services:SERVICES,settings:{...DEFAULT_SETTINGS,address},lineReady:true,lineUrl:''}}));await page.route('**/api/me',r=>r.fulfill({json:{user:null}}));
+ await page.setViewportSize({width:390,height:844});await page.goto('/#home');await page.getByRole('button',{name:'開啟選單'}).click();await page.locator('header nav').getByRole('link',{name:'工作室地點',exact:true}).click();const main=page.locator('main');await expect(main.getByRole('heading',{name:'工作室地點',exact:true})).toBeVisible();await expect(main.locator('address')).toHaveText(address);await expect(main.getByRole('link',{name:'開啟 Google 地圖導航',exact:true})).toHaveAttribute('href',mapUrl);await expect(main.getByText('導航搜尋「朵漾美學工作室」',{exact:true})).toBeVisible();await expect(main.getByRole('link',{name:'LINE 官方帳號（另開視窗）'})).toHaveAttribute('href','https://line.me/R/ti/p/@400cwhyf');await expect(main.getByRole('img',{name:/琳顏美學工作室周邊位置示意/})).toBeVisible();
+ await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text:string)=>{(window as unknown as {copiedAddress:string}).copiedAddress=text}}})});await main.getByRole('button',{name:'複製地址',exact:true}).click();await expect(main.getByRole('button',{name:'已複製地址',exact:true})).toBeVisible();expect(await page.evaluate(()=>(window as unknown as {copiedAddress:string}).copiedAddress)).toBe(address);
+ await expect(main.getByRole('link',{name:'在 Google 地圖查看工作室位置（另開視窗）'})).toHaveAttribute('href',mapUrl);
+ for(const width of [320,390,960,1280]){await page.setViewportSize({width,height:844});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),String(width)).toBe(true)}
+});
