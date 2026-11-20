@@ -15,6 +15,18 @@ export function decrypt(secret,envelope,now=Date.now()){
  const key=privateDecrypt({key:privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(envelope.key,'base64'));
  return JSON.parse(unseal(envelope.payload,key).toString());
 }
+export function decryptReply(privateKey,envelope){
+ const key=privateDecrypt({key:privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(envelope.key,'base64'));
+ return JSON.parse(unseal(envelope.payload,key).toString());
+}
+export async function diagnosticRead(payload,query){
+ if(!Array.isArray(payload.reads)||payload.reads.length<1||payload.reads.length>5||typeof payload.replyPublicKey!=='string')throw Error('Invalid private read request');
+ for(const item of payload.reads)if(typeof item.sql!=='string'||!/^\s*SELECT\b/i.test(item.sql)||item.sql.includes(';')||!Array.isArray(item.params))throw Error('Read-only SELECT statements are required');
+ const results=[];
+ for(const item of payload.reads){const result=await query(item);if(result.meta?.changes!==0||!Array.isArray(result.results)||result.results.length>100)throw Error('Private read response exceeded its bounds');results.push(result.results)}
+ if(Buffer.byteLength(JSON.stringify(results))>100000)throw Error('Private read response is too large');
+ return encrypt({publicKey:payload.replyPublicKey},{results});
+}
 async function main(){
  const token=process.env.CLOUDFLARE_API_TOKEN;if(!token)throw Error('Cloudflare credential is missing');
  const event=JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH,'utf8'));
@@ -25,14 +37,19 @@ async function main(){
  }
  if(event.inputs.phase!=='apply')throw Error('Invalid maintenance phase');
  const payload=decrypt(token,JSON.parse(Buffer.from(event.inputs.request,'base64').toString()));
- if(!Array.isArray(payload.batch)||!payload.batch.length||payload.batch.length>10)throw Error('Invalid maintenance request');
  const account=process.env.CLOUDFLARE_ACCOUNT_ID,db=process.env.CLOUDFLARE_D1_DATABASE_ID;
  if(!account||!db)throw Error('Database binding is missing');
+ async function query(item){
+  const response=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/d1/database/${encodeURIComponent(db)}/query`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sql:item.sql,params:item.params})});
+  const data=await response.json();if(!response.ok||!data.success||!data.result?.[0]?.success)throw Error('Maintenance database operation failed; no private details are logged');return data.result[0];
+ }
+ if(payload.mode==='read'){
+  const result=await diagnosticRead(payload,query);console.log('MAINTENANCE_ENCRYPTED_RESULT='+Buffer.from(JSON.stringify(result)).toString('base64'));return;
+ }
+ if(!Array.isArray(payload.batch)||!payload.batch.length||payload.batch.length>10)throw Error('Invalid maintenance request');
  for(let i=0;i<payload.batch.length;i++){
   const item=payload.batch[i];if(typeof item.sql!=='string'||!Array.isArray(item.params)||!Number.isInteger(item.expectedChanges))throw Error('Invalid maintenance statement');
-  const response=await fetch(`https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(account)}/d1/database/${encodeURIComponent(db)}/query`,{method:'POST',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:JSON.stringify({sql:item.sql,params:item.params})});
-  const data=await response.json();if(!response.ok||!data.success||!data.result?.[0]?.success)throw Error('Maintenance database operation failed; no private details are logged');
-  const changes=data.result[0].meta?.changes;if(changes!==item.expectedChanges)throw Error('Maintenance write guard did not match; inspect current records privately');
+  const data=await query(item),changes=data.meta?.changes;if(changes!==item.expectedChanges)throw Error('Maintenance write guard did not match; inspect current records privately');
   console.log(`Maintenance statement ${i+1}: verified ${changes} changes`);
  }
 }
